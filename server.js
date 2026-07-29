@@ -4,6 +4,8 @@ import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { uid } from './src/utils/helpers.js';
 import { SEED } from './src/data/seed.js';
 import { query, exec } from './src/utils/mysql.js';
@@ -1125,6 +1127,29 @@ async function ensureJohnDoe() {
     console.log('✅ Staff user John Doe updated');
   }
 }
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static assets from Vite's dist folder
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// Serve pages for clean URLs
+app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'dist/admin.html')));
+app.get('/client', (req, res) => res.sendFile(path.join(__dirname, 'dist/client.html')));
+app.get('/client-dashboard', (req, res) => res.sendFile(path.join(__dirname, 'dist/client.html')));
+app.get('/staff', (req, res) => res.sendFile(path.join(__dirname, 'dist/staff.html')));
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'dist/login.html')));
+app.get('/client-login', (req, res) => res.sendFile(path.join(__dirname, 'dist/login.html')));
+app.get('/set-password', (req, res) => res.sendFile(path.join(__dirname, 'dist/set-password.html')));
+
+// Fallback to index.html for UI routing
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, 'dist/index.html'));
+});
 
 // Start the server
 const PORT = process.env.PORT || 3000;
