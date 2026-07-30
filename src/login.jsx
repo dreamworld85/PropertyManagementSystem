@@ -44,13 +44,13 @@ function Login() {
       const uName = (data.user.username || data.user.name || '').toLowerCase();
 
       if (uName === 'client' || uName === 'anjana' || role === 'client' || role.includes('client') || userType === 'client') {
-        window.location.href = '/client';
+        window.location.href = '/client.html';
       } else if (role === 'admin' || userType === 'admin') {
-        window.location.href = '/admin';
+        window.location.href = '/admin.html';
       } else if (role === 'project manager' || role === 'project_manager' || userType === 'project manager' || userType === 'project_manager' || uName === 'projectmanager') {
-        window.location.href = '/';
+        window.location.href = '/index.html';
       } else {
-        window.location.href = '/staff';
+        window.location.href = '/staff.html';
       }
     } catch (err) {
       setError(err.message);

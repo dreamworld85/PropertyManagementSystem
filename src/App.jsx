@@ -34,16 +34,16 @@ export default function App() {
   useEffect(() => {
     if (!user || !user.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = (user.role || '').toLowerCase();
     const userType = (user.userType || '').toLowerCase();
 
     if (role === 'client' || role.includes('client') || userType === 'client') {
-      window.location.href = '/client';
+      window.location.href = '/client.html';
     } else if ((role === 'staff' || userType === 'staff') && !role.includes('manager') && !userType.includes('manager') && !role.includes('admin') && user.username !== 'projectmanager' && user.name !== 'Saurabh M.') {
-      window.location.href = '/staff';
+      window.location.href = '/staff.html';
     }
   }, [user]);
 
@@ -638,7 +638,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   localStorage.removeItem('dgec_user');
-                  window.location.href = '/login';
+                  window.location.href = '/login.html';
                 }}
                 className="btn sec sm" 
                 style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}

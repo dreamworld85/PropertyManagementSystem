@@ -21,7 +21,7 @@ function ClientPortal() {
   useEffect(() => {
     if (!sessionUser || !sessionUser.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = (sessionUser.role || '').toLowerCase();
@@ -29,9 +29,9 @@ function ClientPortal() {
 
     if (role !== 'client' && !role.includes('client') && userType !== 'client' && role !== 'admin' && userType !== 'admin') {
       if (role.includes('manager') || userType.includes('manager') || sessionUser.username === 'projectmanager' || sessionUser.name === 'Saurabh M.') {
-        window.location.href = '/';
+        window.location.href = '/index.html';
       } else if (role === 'staff' || userType === 'staff') {
-        window.location.href = '/staff';
+        window.location.href = '/staff.html';
       }
     }
   }, [sessionUser]);
@@ -338,7 +338,7 @@ function ClientPortal() {
               <button 
                 onClick={() => {
                   localStorage.removeItem('dgec_user');
-                  window.location.href = '/login';
+                  window.location.href = '/login.html';
                 }}
                 className="btn sec sm" 
                 style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}
@@ -361,7 +361,7 @@ function ClientPortal() {
                       window.history.back();
                     } else {
                       localStorage.removeItem('dgec_user');
-                      window.location.href = '/login';
+                      window.location.href = '/login.html';
                     }
                   }}
                   className="btn sec sm"
