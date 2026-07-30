@@ -4,12 +4,17 @@ import Bar from '../components/Bar';
 import Tag from '../components/Tag';
 import { fmt, statusColor, barColor } from '../utils/helpers';
 
-export default function Clients({ db, onAdd, onOpenProject }) {
+export default function Clients({ db = {}, onAdd, onOpenProject }) {
   const [selectedId, setSelectedId] = useState(null);
+  const safeDb = db || {};
+  const clients = safeDb.clients || [];
+  const projects = safeDb.projects || [];
+  const tasks = safeDb.tasks || [];
+  const users = safeDb.users || [];
 
   // Helper to get all committed projects for a client
   const getClientProjects = (c) => {
-    if (!c || !db.projects) return [];
+    if (!c || !projects) return [];
     const cNames = [
       c.name ? String(c.name).trim().toLowerCase() : "",
       c.contact_name ? String(c.contact_name).trim().toLowerCase() : "",
@@ -21,7 +26,7 @@ export default function Clients({ db, onAdd, onOpenProject }) {
       c.uuid !== undefined ? String(c.uuid) : null
     ].filter(Boolean);
 
-    return db.projects.filter((p) => {
+    return projects.filter((p) => {
       // 1. Match by ID (clientId or client_id)
       const pCid = p.clientId !== undefined ? String(p.clientId) : (p.client_id !== undefined ? String(p.client_id) : null);
       if (pCid && cIds.includes(pCid)) return true;
@@ -37,21 +42,34 @@ export default function Clients({ db, onAdd, onOpenProject }) {
     });
   };
 
-  // Helper to find the Project Manager for a given project ID
-  const getProjectManager = (projId) => {
-    const projTasks = db.tasks.filter(t => String(t.projectId) === String(projId));
-    for (const t of projTasks) {
-      const user = db.users.find(u => String(u.id) === String(t.assignee));
-      if (user && user.role?.toLowerCase().includes("project manager")) {
-        return user.name;
-      }
+  // Helper to find the Project Manager for a given project
+  const getProjectManager = (proj) => {
+    if (!proj) return "Project Manager";
+    if (typeof proj === "string" || typeof proj === "number") {
+      proj = projects.find(p => String(p.id) === String(proj) || String(p.uuid) === String(proj));
     }
-    const fallbackPM = db.users.find(u => u.role?.toLowerCase().includes("project manager"));
-    return fallbackPM ? fallbackPM.name : "Saurabh M.";
+    if (proj && proj.project_manager && proj.project_manager.trim()) return proj.project_manager;
+    if (proj && proj.pm_name && proj.pm_name.trim()) return proj.pm_name;
+
+    if (proj && (proj.pm_id || proj.projectManagerId || proj.pmId)) {
+      const pPmId = String(proj.pm_id || proj.projectManagerId || proj.pmId).toLowerCase();
+      const pmUser = users.find(u => String(u.id).toLowerCase() === pPmId || String(u.uuid).toLowerCase() === pPmId);
+      if (pmUser && pmUser.name) return pmUser.name;
+    }
+
+    try {
+      const stored = localStorage.getItem('dgec_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u && u.name) return u.name;
+      }
+    } catch(e) {}
+
+    return "Project Manager";
   };
 
   if (selectedId) {
-    const c = db.clients.find(item => String(item.id) === String(selectedId) || String(item.uuid) === String(selectedId));
+    const c = clients.find(item => String(item.id) === String(selectedId) || String(item.uuid) === String(selectedId));
     if (!c) {
       setSelectedId(null);
       return null;
@@ -137,7 +155,7 @@ export default function Clients({ db, onAdd, onOpenProject }) {
                     <Tag label={p.status} color={statusColor(p.status, db.settings?.projectStatuses)} />
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>
-                    Category: <strong>{p.category || "Full Engineering"}</strong> · PM: <strong style={{ color: "var(--accent2)" }}>{getProjectManager(p.id)}</strong>
+                    Category: <strong>{p.category || "Full Engineering"}</strong> · PM: <strong style={{ color: "var(--accent2)" }}>{getProjectManager(p)}</strong>
                   </div>
                   {p.desc && (
                     <div className="muted" style={{ fontSize: 12, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 450 }}>

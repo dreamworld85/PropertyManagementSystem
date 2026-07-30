@@ -22,8 +22,8 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
   const [f, setF] = useState(() => {
     if (modal.type === "project") {
       const pmDefault = isPmUser && loggedInUser 
-        ? (db.users.find(u => String(u.id) === String(loggedInUser.id) || String(u.uuid) === String(loggedInUser.id) || u.name === loggedInUser.name)?.id || db.users.find(u => u.name === "Saurabh M.")?.id || loggedInUser.id)
-        : (db.users.find(u => u.name === "Saurabh M." || u.role?.toLowerCase().includes("project manager"))?.id || db.users[0]?.id);
+        ? (loggedInUser.uuid || loggedInUser.id)
+        : ((db.users || []).find(u => u.role?.toLowerCase().includes("project_manager") || u.role?.toLowerCase().includes("project manager"))?.id || db.users[0]?.id || "");
 
       return {
         name: "",
@@ -49,7 +49,7 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
         status: S.taskStatuses[0],
         percent: 0
       };
-    if (modal.type === "client") return { name: "", sector: "", contactName: "", email: "", phone: "", contact: "", username: "", password: "" };
+    if (modal.type === "client") return { name: "", sector: "", contactName: "", email: "", phone: "", contact: "", username: "", password: "", projectManagerId: isPmUser && loggedInUser ? (loggedInUser.uuid || loggedInUser.id) : (db.users[0]?.id || "") };
     if (modal.type === "user") return { name: "", username: "", password: "", userType: "Employee", clientId: db.clients[0]?.id || "", role: "", discipline: S.disciplines[1] || S.disciplines[0] || "" };
     if (modal.type === "invoice")
       return {
@@ -72,6 +72,37 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
   const [staffSearchQuery, setStaffSearchQuery] = useState("");
   // Teammates Filter State for Project Creation
   const [staffFilterQuery, setStaffFilterQuery] = useState("");
+  // Required Document Input State for Project Creation
+  const [reqDocInput, setReqDocInput] = useState("");
+  // Inline Create New Client State for Project Creation
+  const [showInlineCreateClient, setShowInlineCreateClient] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({ name: "", sector: "", email: "", phone: "" });
+
+  const handleQuickCreateClient = async () => {
+    if (!newClientForm.name.trim()) {
+      alert("Please enter a Client Name");
+      return;
+    }
+    try {
+      const created = await addClient({
+        name: newClientForm.name.trim(),
+        sector: newClientForm.sector.trim() || "General",
+        contactName: newClientForm.name.trim(),
+        email: newClientForm.email.trim() || "",
+        phone: newClientForm.phone.trim() || "",
+        contact: newClientForm.email.trim() || ""
+      });
+
+      if (created) {
+        const newId = created.id || created.uuid;
+        set("clientId", newId);
+        setShowInlineCreateClient(false);
+        setNewClientForm({ name: "", sector: "", email: "", phone: "" });
+      }
+    } catch(e) {
+      console.error("Quick create client error:", e);
+    }
+  };
 
   React.useEffect(() => {
     if (modal.type === "user") {
@@ -86,6 +117,39 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
     }
   }, [modal.type]);
 
+  // Combine all staff sources (db.users, db.staff, db.teammates, and staffList) so ONLY valid staff members are visible
+  const allAvailableStaff = [];
+  const staffSeenKeys = new Set();
+  const pushStaffCandidate = (cand) => {
+    if (!cand || !cand.name) return;
+    const nameKey = String(cand.name).trim().toLowerCase();
+    const roleLower = String(cand.role || cand.discipline || '').toLowerCase();
+    const typeLower = String(cand.userType || cand.user_type || '').toLowerCase();
+
+    // Filter out Clients, Admins, and Project Managers (e.g. Saurabh M.) from Teammates list
+    if (roleLower.includes('client') || typeLower.includes('client')) return;
+    if (roleLower.includes('admin') || typeLower.includes('admin')) return;
+    if (roleLower.includes('project manager') || roleLower.includes('project_manager')) return;
+    if (nameKey === 'saurabh m.' || nameKey === 'saurabh' || nameKey === 'you') return;
+
+    if (!staffSeenKeys.has(nameKey)) {
+      staffSeenKeys.add(nameKey);
+      allAvailableStaff.push({
+        id: cand.id || cand.uuid || `cand_${nameKey}`,
+        uuid: cand.uuid || cand.id || `cand_${nameKey}`,
+        name: cand.name.trim(),
+        role: cand.role || cand.discipline || 'Staff',
+        userType: cand.userType || cand.user_type || 'staff',
+        discipline: cand.discipline || cand.role || 'Engineering'
+      });
+    }
+  };
+
+  (db.staff || []).forEach(pushStaffCandidate);
+  (staffList || []).forEach(pushStaffCandidate);
+  (db.users || []).forEach(pushStaffCandidate);
+  (db.teammates || []).forEach(pushStaffCandidate);
+
   const set = (k, v) => setF(s => ({ ...s, [k]: v }));
   const titles = {
     project: "New project",
@@ -98,7 +162,16 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
   const submit = () => {
     if (modal.type === "project") {
       if (!f.name.trim()) return;
-      addProject(f);
+      const pmIdToUse = isPmUser && loggedInUser ? (loggedInUser.uuid || loggedInUser.id) : (f.projectManagerId || f.pm_id);
+      const pmNameToUse = isPmUser && loggedInUser ? loggedInUser.name : (f.project_manager || f.pm_name);
+      addProject({
+        ...f,
+        pm_id: pmIdToUse,
+        pmId: pmIdToUse,
+        projectManagerId: pmIdToUse,
+        project_manager: pmNameToUse,
+        pm_name: pmNameToUse
+      });
     }
     if (modal.type === "task") {
       if (!f.title.trim()) return;
@@ -106,7 +179,17 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
     }
     if (modal.type === "client") {
       if (!f.name.trim()) return;
-      addClient(f);
+      const pmIdToUse = isPmUser && loggedInUser ? (loggedInUser.uuid || loggedInUser.id) : (f.projectManagerId || f.pm_id);
+      const pmNameToUse = isPmUser && loggedInUser ? loggedInUser.name : (f.pm_name || f.pmName);
+      addClient({
+        ...f,
+        pm_id: pmIdToUse,
+        pmId: pmIdToUse,
+        projectManagerId: pmIdToUse,
+        pm_name: pmNameToUse,
+        pmName: pmNameToUse,
+        project_manager: pmNameToUse
+      });
     }
     if (modal.type === "user") {
       const targetProjId = modal.projectId || db.projects[0]?.id;
@@ -175,40 +258,137 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                 <input className="inp" value={f.name} onChange={e => set("name", e.target.value)} />
               </Field>
               <div className="row2">
-                <Field l="Client Organization">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <input
-                      type="text"
-                      className="inp"
-                      placeholder="🔍 Search client by name or sector..."
-                      value={clientSearchQuery}
-                      onChange={e => setClientSearchQuery(e.target.value)}
-                      style={{ fontSize: 12, padding: "6px 10px", background: "#f8fafc" }}
-                    />
-                    <select
-                      className="inp"
-                      value={f.clientId}
-                      onChange={e => set("clientId", e.target.value)}
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>Client Organization</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowInlineCreateClient(!showInlineCreateClient)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--accent2)",
+                        fontWeight: 700,
+                        fontSize: 11.5,
+                        cursor: "pointer",
+                        padding: 0,
+                        textDecoration: "underline"
+                      }}
                     >
-                      {(db.clients || [])
-                        .filter(c =>
-                          (c.name || "").toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
-                          (c.sector || "").toLowerCase().includes(clientSearchQuery.toLowerCase())
-                        )
-                        .map(c => (
-                          <option key={c.id || c.uuid} value={c.id || c.uuid}>
-                            {c.name} {c.sector ? `(${c.sector})` : ""}
-                          </option>
-                        ))}
-                      {(db.clients || []).filter(c =>
-                        (c.name || "").toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
-                        (c.sector || "").toLowerCase().includes(clientSearchQuery.toLowerCase())
-                      ).length === 0 && (
-                        <option value="" disabled>No matching clients found</option>
-                      )}
-                    </select>
+                      {showInlineCreateClient ? "← Select Existing" : "＋ Create New Client"}
+                    </button>
                   </div>
-                </Field>
+
+                  {!showInlineCreateClient ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <input
+                        type="text"
+                        className="inp"
+                        placeholder="🔍 Search client by name or sector..."
+                        value={clientSearchQuery}
+                        onChange={e => setClientSearchQuery(e.target.value)}
+                        style={{ fontSize: 12, padding: "6px 10px", background: "#f8fafc" }}
+                      />
+                      <select
+                        className="inp"
+                        value={f.clientId}
+                        onChange={e => set("clientId", e.target.value)}
+                      >
+                        {(db?.clients || [])
+                          .filter(c => {
+                            if (isPmUser && loggedInUser) {
+                              const cPmId = String(c.pm_id || c.pmId || '').toLowerCase();
+                              const pmIdVal = String(loggedInUser.id || '').toLowerCase();
+                              const pmUuidVal = String(loggedInUser.uuid || '').toLowerCase();
+                              const pmNameVal = String(loggedInUser.name || '').trim().toLowerCase();
+                              
+                              if (cPmId && (cPmId === pmIdVal || cPmId === pmUuidVal)) {
+                                // Match
+                              } else if (c.project_manager && c.project_manager.toLowerCase() === pmNameVal) {
+                                // Match
+                              } else {
+                                return false;
+                              }
+                            }
+                            return (
+                              (c?.name || "").toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                              (c?.sector || "").toLowerCase().includes(clientSearchQuery.toLowerCase())
+                            );
+                          })
+                          .map(c => (
+                            <option key={c?.id || c?.uuid} value={c?.id || c?.uuid}>
+                              {c?.name} {c?.sector ? `(${c.sector})` : ""}
+                            </option>
+                          ))}
+                        {(db?.clients || []).filter(c => {
+                          if (isPmUser && loggedInUser) {
+                            const cPmId = String(c.pm_id || c.pmId || '').toLowerCase();
+                            const pmIdVal = String(loggedInUser.id || '').toLowerCase();
+                            const pmUuidVal = String(loggedInUser.uuid || '').toLowerCase();
+                            const pmNameVal = String(loggedInUser.name || '').trim().toLowerCase();
+                            if (cPmId && (cPmId === pmIdVal || cPmId === pmUuidVal)) {
+                              // Match
+                            } else if (c.project_manager && c.project_manager.toLowerCase() === pmNameVal) {
+                              // Match
+                            } else {
+                              return false;
+                            }
+                          }
+                          return (
+                            (c?.name || "").toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                            (c?.sector || "").toLowerCase().includes(clientSearchQuery.toLowerCase())
+                          );
+                        }).length === 0 && (
+                          <option value="" disabled>No matching clients found for your profile</option>
+                        )}
+                      </select>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "10px 12px", background: "#f8fafc", borderRadius: 10, border: "1px solid #cbd5e1", display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ fontWeight: 700, fontSize: 11.5, color: "#1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>🏢 Quick Create New Client</span>
+                        <span style={{ fontSize: 10, color: "#64748b" }}>Will be saved to Clients Page</span>
+                      </div>
+                      
+                      <input
+                        type="text"
+                        className="inp"
+                        placeholder="Client Name * (e.g. Acme Corp)"
+                        value={newClientForm.name}
+                        onChange={e => setNewClientForm(s => ({ ...s, name: e.target.value }))}
+                        style={{ fontSize: 12, padding: "5px 8px" }}
+                      />
+                      
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <input
+                          type="text"
+                          className="inp"
+                          placeholder="Sector (e.g. Real Estate)"
+                          value={newClientForm.sector}
+                          onChange={e => setNewClientForm(s => ({ ...s, sector: e.target.value }))}
+                          style={{ flex: 1, fontSize: 11.5, padding: "4px 8px" }}
+                        />
+                        <input
+                          type="email"
+                          className="inp"
+                          placeholder="Client Email"
+                          value={newClientForm.email}
+                          onChange={e => setNewClientForm(s => ({ ...s, email: e.target.value }))}
+                          style={{ flex: 1, fontSize: 11.5, padding: "4px 8px" }}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        className="btn sm"
+                        onClick={handleQuickCreateClient}
+                        style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, fontSize: 11.5, marginTop: 2, padding: "5px" }}
+                      >
+                        ✓ Save Client & Select for Project
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <Field l="Service Category">
                   <select className="inp" value={f.category} onChange={e => set("category", e.target.value)}>
                     {S.categories.map(c => <option key={c}>{c}</option>)}
@@ -217,28 +397,48 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
               </div>
               <Field l="Project Manager">
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <select
-                    className="inp"
-                    value={f.projectManagerId}
-                    onChange={e => set("projectManagerId", e.target.value)}
-                    disabled={isPmUser}
-                    style={{
-                      background: isPmUser ? "#f1f5f9" : "#fff",
-                      cursor: isPmUser ? "not-allowed" : "pointer",
-                      fontWeight: isPmUser ? 700 : 500,
-                      color: isPmUser ? "var(--ink)" : "inherit"
-                    }}
-                  >
-                    {db.users.filter(u => u.name === "Saurabh M." || u.role?.toLowerCase().includes("project manager")).map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.role || "Project Manager"})
-                      </option>
-                    ))}
-                  </select>
-                  {isPmUser && (
-                    <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
-                      <span>🔒</span> Locked to active Project Manager ({loggedInUser?.name || "Saurabh M."})
-                    </div>
+                  {isPmUser ? (
+                    <>
+                      <input
+                        type="text"
+                        className="inp"
+                        readOnly
+                        value={`${loggedInUser?.name || "Project Manager"} (Project Manager)`}
+                        style={{
+                          background: "#f8fafc",
+                          color: "var(--ink)",
+                          fontWeight: 700,
+                          cursor: "default",
+                          border: "1px solid var(--line)"
+                        }}
+                      />
+                      <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                        <span>🔒</span> Assigned to active Project Manager ({loggedInUser?.name || "Tharun"})
+                      </div>
+                    </>
+                  ) : (
+                    <select
+                      className="inp"
+                      value={f.projectManagerId}
+                      onChange={e => set("projectManagerId", e.target.value)}
+                      style={{
+                        background: "#fff",
+                        cursor: "pointer",
+                        fontWeight: 500,
+                        color: "inherit"
+                      }}
+                    >
+                      {(db.users || []).filter(u => 
+                        u.role?.toLowerCase().includes("project manager") || 
+                        u.role?.toLowerCase().includes("project_manager") ||
+                        u.name === "Saurabh M." ||
+                        u.name === "Tharun"
+                      ).map(u => (
+                        <option key={u.id || u.uuid || u.name} value={u.id || u.uuid}>
+                          {u.name} ({u.role || "Project Manager"})
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
               </Field>
@@ -255,9 +455,104 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                   <input type="date" className="inp" value={f.end} onChange={e => set("end", e.target.value)} />
                 </Field>
               </div>
-              <Field l={`Initial Progress: ${f.progress}%`}>
-                <input type="range" min="0" max="100" step="5" value={f.progress} onChange={e => set("progress", +e.target.value)} style={{ accentColor: "var(--accent)", width: "100%" }} />
-              </Field>
+              <div className="row2" style={{ marginTop: 10 }}>
+                <Field l="Total Project Cost ($)">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    className="inp"
+                    placeholder="e.g. 150000"
+                    value={f.totalCost || ""}
+                    onChange={e => set("totalCost", e.target.value)}
+                  />
+                </Field>
+                <Field l={`Initial Progress: ${f.progress}%`}>
+                  <input type="range" min="0" max="100" step="5" value={f.progress} onChange={e => set("progress", +e.target.value)} style={{ accentColor: "var(--accent)", width: "100%", marginTop: 8 }} />
+                </Field>
+              </div>
+
+              {/* REQUIRED PROJECT DOCUMENTS INPUT SECTION */}
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+                <Field l="Required Project Documents (e.g., Land Tax, Building Permit)">
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input
+                      type="text"
+                      className="inp"
+                      placeholder="Type required document name (e.g., Land Tax)..."
+                      value={reqDocInput}
+                      onChange={e => setReqDocInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (reqDocInput.trim()) {
+                            const list = f.requiredDocuments || [];
+                            if (!list.includes(reqDocInput.trim())) {
+                              set("requiredDocuments", [...list, reqDocInput.trim()]);
+                            }
+                            setReqDocInput("");
+                          }
+                        }
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => {
+                        if (reqDocInput.trim()) {
+                          const list = f.requiredDocuments || [];
+                          if (!list.includes(reqDocInput.trim())) {
+                            set("requiredDocuments", [...list, reqDocInput.trim()]);
+                          }
+                          setReqDocInput("");
+                        }
+                      }}
+                      style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, padding: "6px 14px" }}
+                    >
+                      ＋ Add Doc
+                    </button>
+                  </div>
+
+                  {/* DISPLAY ADDED REQUIRED DOCUMENT BADGES */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {(f.requiredDocuments || []).map((docName, idx) => (
+                      <span
+                        key={idx}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          background: "#eff6ff",
+                          border: "1px solid #bfdbfe",
+                          color: "#1d4ed8",
+                          padding: "4px 10px",
+                          borderRadius: 20,
+                          fontSize: 12,
+                          fontWeight: 600
+                        }}
+                      >
+                        📄 {docName}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const list = (f.requiredDocuments || []).filter((_, i) => i !== idx);
+                            set("requiredDocuments", list);
+                          }}
+                          style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontWeight: 800, padding: 0, marginLeft: 2 }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {(f.requiredDocuments || []).length === 0 && (
+                      <span style={{ fontSize: 11.5, color: "var(--muted)", fontStyle: "italic" }}>
+                        No required documents added yet. Type a document name above and click "＋ Add Doc".
+                      </span>
+                    )}
+                  </div>
+                </Field>
+              </div>
 
               {/* ASSIGNED TEAMMATES SECTION */}
               <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
@@ -302,19 +597,18 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                     />
                     
                     <div style={{ maxHeight: 200, overflowY: "auto", background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 10, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                      {(db.users || [])
-                        .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
+                      {allAvailableStaff
                         .filter(u =>
                           (u.name || "").toLowerCase().includes(staffFilterQuery.toLowerCase()) ||
                           (u.role || "").toLowerCase().includes(staffFilterQuery.toLowerCase()) ||
                           (u.discipline || "").toLowerCase().includes(staffFilterQuery.toLowerCase())
                         )
                         .map(u => {
-                          const isSelected = (f.selectedTeammates || []).some(t => String(t.id) === String(u.id));
-                          const teammateObj = (f.selectedTeammates || []).find(t => String(t.id) === String(u.id));
+                          const isSelected = (f.selectedTeammates || []).some(t => String(t.id) === String(u.id) || String(t.id) === String(u.uuid) || (t.name && u.name && t.name.toLowerCase() === u.name.toLowerCase()));
+                          const teammateObj = (f.selectedTeammates || []).find(t => String(t.id) === String(u.id) || String(t.id) === String(u.uuid) || (t.name && u.name && t.name.toLowerCase() === u.name.toLowerCase()));
 
                           return (
-                            <div key={u.id} style={{ padding: "8px 10px", background: isSelected ? "#ecfdf5" : "#fff", border: `1px solid ${isSelected ? "#6ee7b7" : "var(--line)"}`, borderRadius: 8 }}>
+                            <div key={u.id || u.uuid || u.name} style={{ padding: "8px 10px", background: isSelected ? "#ecfdf5" : "#fff", border: `1px solid ${isSelected ? "#6ee7b7" : "var(--line)"}`, borderRadius: 8 }}>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                 <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flex: 1, margin: 0, fontWeight: isSelected ? 700 : 500, fontSize: 13, color: "var(--ink)" }}>
                                   <input
@@ -324,9 +618,9 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                                       const checked = e.target.checked;
                                       let current = f.selectedTeammates || [];
                                       if (checked) {
-                                        current = [...current, { id: u.id, name: u.name, discipline: u.discipline || u.role || "Structural", taskTitle: "" }];
+                                        current = [...current, { id: u.id || u.uuid, name: u.name, discipline: u.discipline || u.role || "Structural", taskTitle: "" }];
                                       } else {
-                                        current = current.filter(t => String(t.id) !== String(u.id));
+                                        current = current.filter(t => String(t.id) !== String(u.id) && String(t.id) !== String(u.uuid) && t.name !== u.name);
                                       }
                                       set("selectedTeammates", current);
                                     }}
@@ -346,7 +640,7 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                                     value={teammateObj?.taskTitle || ""}
                                     onChange={(e) => {
                                       const val = e.target.value;
-                                      const current = (f.selectedTeammates || []).map(t => String(t.id) === String(u.id) ? { ...t, taskTitle: val } : t);
+                                      const current = (f.selectedTeammates || []).map(t => (String(t.id) === String(u.id) || String(t.id) === String(u.uuid) || t.name === u.name) ? { ...t, taskTitle: val } : t);
                                       set("selectedTeammates", current);
                                     }}
                                     style={{ fontSize: 11.5, padding: "4px 8px" }}
@@ -356,7 +650,7 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                             </div>
                           );
                         })}
-                      {(db.users || []).filter(u => !u.role?.toLowerCase().includes("client")).length === 0 && (
+                      {allAvailableStaff.length === 0 && (
                         <div style={{ fontSize: 12, color: "var(--muted)", padding: 8, textAlign: "center" }}>No staff members available</div>
                       )}
                     </div>
@@ -378,10 +672,10 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                 </Field>
                 <Field l="Assignee Teammate">
                   <select className="inp" value={f.assignee} onChange={e => set("assignee", e.target.value)}>
-                    {db.users.map(u => {
+                    {allAvailableStaff.map(u => {
                       const displayName = u.name === "You" ? "Administrator" : u.name;
                       return (
-                        <option key={u.id} value={u.id}>
+                        <option key={u.id || u.uuid || u.name} value={u.id || u.uuid || u.name}>
                           {displayName} {u.role ? `(${u.role})` : ""}
                         </option>
                       );
@@ -413,45 +707,68 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
                 <input className="inp" value={f.sector} onChange={e => set("sector", e.target.value)} />
               </Field>
               
-              {/* ASSIGNED PROJECT MANAGER / STAFF LEAD WITH SEARCH BAR */}
+              {/* ASSIGNED PROJECT MANAGER / STAFF LEAD */}
               <div style={{ marginTop: 12 }}>
                 <Field l="Assigned Project Manager / Staff Lead">
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <input
-                      type="text"
-                      className="inp"
-                      placeholder="🔍 Search existing staff by name, role, or discipline..."
-                      value={staffSearchQuery}
-                      onChange={e => setStaffSearchQuery(e.target.value)}
-                      style={{ fontSize: 12, padding: "6px 10px", background: "#f8fafc" }}
-                    />
-                    <select
-                      className="inp"
-                      value={f.projectManagerId}
-                      onChange={e => set("projectManagerId", e.target.value)}
-                    >
-                      {(db.users || [])
-                        .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
-                        .filter(u =>
-                          (u.name || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
-                          (u.role || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
-                          (u.discipline || "").toLowerCase().includes(staffSearchQuery.toLowerCase())
-                        )
-                        .map(u => (
-                          <option key={u.id} value={u.id}>
-                            {u.name === "You" ? "Administrator" : u.name} {u.role ? `(${u.role})` : ""}
-                          </option>
-                        ))}
-                      {(db.users || [])
-                        .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
-                        .filter(u =>
-                          (u.name || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
-                          (u.role || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
-                          (u.discipline || "").toLowerCase().includes(staffSearchQuery.toLowerCase())
-                        ).length === 0 && (
-                          <option value="" disabled>No matching staff found</option>
-                        )}
-                    </select>
+                    {isPmUser ? (
+                      <>
+                        <input
+                          type="text"
+                          className="inp"
+                          readOnly
+                          value={`${loggedInUser?.name || "Project Manager"} (Project Manager)`}
+                          style={{
+                            background: "#f8fafc",
+                            color: "var(--ink)",
+                            fontWeight: 700,
+                            cursor: "default",
+                            border: "1px solid var(--line)"
+                          }}
+                        />
+                        <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                          <span>🔒</span> Assigned to active Project Manager ({loggedInUser?.name || "Tharun"})
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          className="inp"
+                          placeholder="🔍 Search existing staff by name, role, or discipline..."
+                          value={staffSearchQuery}
+                          onChange={e => setStaffSearchQuery(e.target.value)}
+                          style={{ fontSize: 12, padding: "6px 10px", background: "#f8fafc" }}
+                        />
+                        <select
+                          className="inp"
+                          value={f.projectManagerId}
+                          onChange={e => set("projectManagerId", e.target.value)}
+                        >
+                          {(db.users || [])
+                            .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
+                            .filter(u =>
+                              (u.name || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
+                              (u.role || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
+                              (u.discipline || "").toLowerCase().includes(staffSearchQuery.toLowerCase())
+                            )
+                            .map(u => (
+                              <option key={u.id} value={u.id}>
+                                {u.name === "You" ? "Administrator" : u.name} {u.role ? `(${u.role})` : ""}
+                              </option>
+                            ))}
+                          {(db.users || [])
+                            .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
+                            .filter(u =>
+                              (u.name || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
+                              (u.role || "").toLowerCase().includes(staffSearchQuery.toLowerCase()) ||
+                              (u.discipline || "").toLowerCase().includes(staffSearchQuery.toLowerCase())
+                            ).length === 0 && (
+                              <option value="" disabled>No matching staff found</option>
+                            )}
+                        </select>
+                      </>
+                    )}
                   </div>
                 </Field>
               </div>
@@ -521,7 +838,17 @@ export default function Modals({ modal, close, db, S, addProject, addTask, addCl
 
                     // 1. Add staff members from Staff Management API / DB
                     (staffList.length > 0 ? staffList : (db.staff || [])).forEach(s => {
-                      if (s.name && !combinedRoster.some(item => item.name.toLowerCase() === s.name.toLowerCase())) {
+                      const nameLower = String(s.name || '').trim().toLowerCase();
+                      const roleLower = String(s.role || '').trim().toLowerCase();
+                      if (
+                        s.name &&
+                        nameLower !== "saurabh m." &&
+                        nameLower !== "saurabh" &&
+                        !roleLower.includes("project manager") &&
+                        !roleLower.includes("client") &&
+                        !roleLower.includes("admin") &&
+                        !combinedRoster.some(item => item.name.toLowerCase() === s.name.toLowerCase())
+                      ) {
                         combinedRoster.push({
                           id: s.id || s.uuid,
                           uuid: s.uuid || s.id,

@@ -6,6 +6,7 @@ import { uid, statusColor, barColor, fmt } from './utils/helpers';
 import Avatar from './components/Avatar';
 import Tag from './components/Tag';
 import Bar from './components/Bar';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 function StaffPortal() {
@@ -21,7 +22,7 @@ function StaffPortal() {
     } catch (e) {}
   }
 
-  const [db, setDb] = useState(null);
+  const [db, setDb] = useState(() => SEED);
   const [tab, setTab] = useState("overview"); // overview, tasks, profile
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editProgress, setEditProgress] = useState(0);
@@ -33,7 +34,7 @@ function StaffPortal() {
       const role = (sessionUser.role || '').toLowerCase();
       const userType = (sessionUser.userType || sessionUser.user_type || '').toLowerCase();
       if (role === 'client' || role.includes('client') || userType === 'client') {
-        window.location.href = '/client.html';
+        window.location.href = '/client';
         return;
       }
     }
@@ -143,26 +144,66 @@ function StaffPortal() {
   const userProjIds = Array.from(new Set(userTasks.map(t => t.projectId)));
   const userProjects = db.projects.filter(p => userProjIds.includes(p.id) || (user.name === "John Doe" && (p.name.includes("GENOME") || p.name.includes("BEC") || p.name.includes("OQEP") || p.name.includes("SANVIRA"))));
 
-  // Helper to find Project Manager details for a given project ID
+  // Helper to find the Project Manager for a given project ID
   const getProjectManager = (projId) => {
-    const projTasks = db.tasks.filter(t => t.projectId === projId);
-    for (const t of projTasks) {
-      const u = db.users.find(usr => usr.id === t.assignee);
-      if (u && u.role && u.role.toLowerCase().includes("project manager")) {
-        return u;
+    const proj = (db.projects || []).find(p => String(p.id) === String(projId) || String(p.uuid) === String(projId));
+    if (proj) {
+      if (proj.project_manager) return { name: proj.project_manager, role: "Project Manager" };
+      if (proj.pm_name) return { name: proj.pm_name, role: "Project Manager" };
+      const pmId = proj.pm_id || proj.projectManagerId;
+      if (pmId) {
+        const pmUser = (db.users || []).find(u => String(u.id) === String(pmId) || String(u.uuid) === String(pmId));
+        if (pmUser) return pmUser;
       }
     }
     const fallbackPM = db.users.find(u => u.role && u.role.toLowerCase().includes("project manager"));
-    return fallbackPM || { name: "Saurabh M.", role: "Project Manager", discipline: "MEP", phone: "+968 9412 8899", email: "pm@dgec.com" };
+    return fallbackPM || { name: "Project Manager", role: "Project Manager" };
   };
 
-  // Helper to get colleagues/teammates working on the same project
+  // Helper to get colleagues/teammates working on the same project (excluding Admins & PMs)
   const getTeammates = (projId) => {
     const projTasks = db.tasks.filter(t => t.projectId === projId);
-    const teammateIds = Array.from(new Set(projTasks.map(t => t.assignee).filter(Boolean)));
-    const teamMembers = db.users.filter(u => teammateIds.includes(u.id) && u.id !== user.id && !u.role?.toLowerCase().includes("admin") && !u.role?.toLowerCase().includes("client"));
-    if (teamMembers.length > 0) return teamMembers;
-    return db.users.filter(u => u.id !== user.id && !u.role?.toLowerCase().includes("admin") && !u.role?.toLowerCase().includes("client")).slice(0, 3);
+    const pmUser = getProjectManager(projId);
+    const pmNameLower = String(pmUser ? pmUser.name : "Project Manager").trim().toLowerCase();
+
+    const isPMOrAdmin = (u) => {
+      if (!u) return true;
+      const nameLower = String(u.name || '').trim().toLowerCase();
+      const roleLower = String(u.role || u.userType || u.user_type || '').trim().toLowerCase();
+      return (
+        nameLower === 'saurabh m.' ||
+        nameLower === 'administrator' ||
+        nameLower === pmNameLower ||
+        roleLower.includes('admin') ||
+        roleLower.includes('client') ||
+        roleLower.includes('project manager') ||
+        roleLower.includes('project_manager')
+      );
+    };
+
+    const teamMembers = [];
+    const seen = new Set();
+
+    projTasks.forEach(t => {
+      if (t.assignee) {
+        const u = db.users.find(usr => String(usr.id) === String(t.assignee) || String(usr.uuid) === String(t.assignee) || usr.name === t.assignee);
+        if (u && !isPMOrAdmin(u) && String(u.id) !== String(user.id) && !seen.has(String(u.name || u.id).toLowerCase())) {
+          seen.add(String(u.name || u.id).toLowerCase());
+          teamMembers.push(u);
+        }
+      }
+    });
+
+    (db.teammates || []).forEach(tm => {
+      if (String(tm.projectId || tm.project_id || tm.assignedProject).toLowerCase() === String(projId).toLowerCase()) {
+        if (!isPMOrAdmin(tm) && String(tm.name).toLowerCase() !== String(user.name).toLowerCase() && !seen.has(String(tm.name || tm.id).toLowerCase())) {
+          seen.add(String(tm.name || tm.id).toLowerCase());
+          teamMembers.push(tm);
+        }
+      }
+    });
+
+    return teamMembers;
   };
 
   // Contact number & email helper
@@ -273,7 +314,11 @@ function StaffPortal() {
           <div>
             <div className="brand" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div className="logo" style={{ background: "var(--accent)" }}>🛠️</div>
+                <div className="logo" style={{ background: "var(--accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                  </svg>
+                </div>
                 <div>
                   <div className="t1 disp">Staff Portal</div>
                   <div className="t2">Employee Workspace</div>
@@ -298,13 +343,19 @@ function StaffPortal() {
 
               <nav className="nav">
                 <button className={tab === "overview" ? "on" : ""} onClick={() => { setTab("overview"); setMenuOpen(false); }}>
-                  <span>▦</span> Overview
+                  <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
+                  </span> Overview
                 </button>
                 <button className={tab === "tasks" ? "on" : ""} onClick={() => { setTab("tasks"); setMenuOpen(false); }}>
-                  <span>📋</span> My Tasks ({totalTasksCount})
+                  <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" ry="1" /><path d="M9 12l2 2 4-4" /><path d="M9 16h6" /></svg>
+                  </span> My Tasks ({totalTasksCount})
                 </button>
                 <button className={tab === "profile" ? "on" : ""} onClick={() => { setTab("profile"); setMenuOpen(false); }}>
-                  <span>👤</span> My Profile
+                  <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                  </span> My Profile
                 </button>
               </nav>
             </div>
@@ -315,12 +366,12 @@ function StaffPortal() {
               <button
                 onClick={() => {
                   localStorage.removeItem('dgec_user');
-                  window.location.href = '/login.html';
+                  window.location.href = '/login';
                 }}
                 className="btn sec sm"
-                style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}
+                style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
               >
-                🚪 Log Out
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg> Log Out
               </button>
             </div>
           </div>
@@ -832,6 +883,8 @@ function StaffPortal() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <StaffPortal />
+    <ErrorBoundary>
+      <StaffPortal />
+    </ErrorBoundary>
   </React.StrictMode>
 );

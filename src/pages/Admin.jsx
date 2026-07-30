@@ -75,10 +75,55 @@ export default function Admin({
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [projectTeammateSearchQuery, setProjectTeammateSearchQuery] = useState("");
 
-  // Helper to find the Project Manager for a given project ID (Saurabh M.)
-  const getProjectManager = (projId) => {
-    const pmUser = db.users.find(u => u.name === "Saurabh M." || (u.role && u.role.toLowerCase().includes("project manager")));
-    return pmUser || { name: "Saurabh M.", role: "Project Manager - MEP", discipline: "MEP", email: "pm@dgec.com", phone: "+968 9412 8899" };
+  // Helper to find the Project Manager for a given project or project ID
+  const getProjectManager = (target) => {
+    if (!target) return { name: "Project Manager", role: "Project Manager", discipline: "Management", email: "", phone: "" };
+
+    let proj = typeof target === "object" ? target : null;
+    if (!proj) {
+      const targetStr = String(target).toLowerCase();
+      proj = (db.projects || []).find(p => 
+        String(p.id).toLowerCase() === targetStr || 
+        String(p.uuid || '').toLowerCase() === targetStr ||
+        String(p.db_id || '').toLowerCase() === targetStr
+      );
+    }
+
+    if (proj) {
+      // 1. Match by Project Manager Name explicitly on project
+      const pmNameVal = (proj.project_manager || proj.pm_name || '').trim();
+      if (pmNameVal) {
+        const pmUser = (db.users || []).find(u => u.name && u.name.trim().toLowerCase() === pmNameVal.toLowerCase());
+        return {
+          name: pmNameVal,
+          role: pmUser?.role || "Project Manager",
+          discipline: pmUser?.discipline || "Management",
+          email: pmUser?.email || "",
+          phone: pmUser?.phone || ""
+        };
+      }
+
+      // 2. Match by pm_id / projectManagerId / pmId against db.users
+      const pPmId = String(proj.pm_id || proj.projectManagerId || proj.pmId || '').toLowerCase();
+      if (pPmId) {
+        const pmUser = (db.users || []).find(u => 
+          String(u.id).toLowerCase() === pPmId || 
+          String(u.uuid || '').toLowerCase() === pPmId ||
+          String(u.name || '').toLowerCase() === pPmId
+        );
+        if (pmUser && pmUser.name) {
+          return {
+            name: pmUser.name,
+            role: pmUser.role || "Project Manager",
+            discipline: pmUser.discipline || "Management",
+            email: pmUser.email || "",
+            phone: pmUser.phone || ""
+          };
+        }
+      }
+    }
+
+    return { name: "Project Manager", role: "Project Manager", discipline: "Management", email: "", phone: "" };
   };
 
   // Helper to find client for project from active database records
@@ -453,13 +498,13 @@ export default function Admin({
                     👔 Project Manager (Team Leader)
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Avatar name={getProjectManager(selectedProj.id).name} size={40} />
+                    <Avatar name={getProjectManager(selectedProj).name} size={40} />
                     <div>
                       <div style={{ fontWeight: 700, color: "var(--ink)", fontSize: 14.5 }}>
-                        {getProjectManager(selectedProj.id).name}
+                        {getProjectManager(selectedProj).name}
                       </div>
                       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                        {getProjectManager(selectedProj.id).role} · {getProjectManager(selectedProj.id).discipline}
+                        {getProjectManager(selectedProj).role} · {getProjectManager(selectedProj).discipline}
                       </div>
                     </div>
                   </div>

@@ -2,18 +2,15 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 async function initDB() {
   try {
     console.log('Connecting to MySQL root...');
     const conn = await mysql.createConnection({
-      host: process.env.DB_HOST || '127.0.0.1',
-      port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3307,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || ''
+      host: '127.0.0.1',
+      port: 3306,
+      user: 'root',
+      password: ''
     });
 
     console.log('Creating database dgec_db if not exists...');
@@ -21,7 +18,7 @@ async function initDB() {
     await conn.query('USE dgec_db;');
 
     // Read and run dgec_schema.sql
-    const schemaPath = path.join(process.cwd(), 'dgec_db.sql');
+    const schemaPath = 'C:/Users/ANJANA/.gemini/antigravity/brain/61d4ad69-d1f3-411d-9d80-81aef16ecd1a/dgec_schema.sql';
     if (fs.existsSync(schemaPath)) {
       const sqlContent = fs.readFileSync(schemaPath, 'utf8');
       const statements = sqlContent.split(';').map(s => s.trim()).filter(s => s.length > 0);

@@ -4,25 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DGEC Administration Panel</title>
-  <script>
-    (function() {
-      const originalFetch = window.fetch;
-      window.fetch = function(input, init) {
-        if (typeof input === 'string' && input.startsWith('/api')) {
-          const apiBase = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-            ? '' 
-            : 'https://api2.greensparrows.com';
-          input = apiBase + input;
-        }
-        return originalFetch(input, init);
-      };
-    })();
-  </script>
-  <script type="module" crossorigin src="/assets/admin-4QvEvJW2.js"></script>
+  <script type="module" crossorigin src="/assets/admin-BIfQkCNf.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/client-CkCYsZd5.js">
-  <link rel="modulepreload" crossorigin href="/assets/index-C2Vhz52G.js">
-  <link rel="modulepreload" crossorigin href="/assets/StaffManagement-BK9scb1p.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-C9mnKCRI.css">
+  <link rel="modulepreload" crossorigin href="/assets/index-T2O9Cf8M.js">
+  <link rel="modulepreload" crossorigin href="/assets/StaffManagement-BTQD7A6V.js">
+  <link rel="stylesheet" crossorigin href="/assets/index-odcQlxxr.css">
 </head>
 <body>
   <div id="root"></div>

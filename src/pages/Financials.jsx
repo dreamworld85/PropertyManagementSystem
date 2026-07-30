@@ -2,23 +2,32 @@ import React, { useState } from 'react';
 import Tag from '../components/Tag';
 import { fmt, statusColor } from '../utils/helpers';
 
-export default function Financials({ db, addInvoice, updateInvoiceStatus, deleteInvoice, setModal, onOpen }) {
+export default function Financials({ db = {}, addInvoice, updateInvoiceStatus, deleteInvoice, setModal, onOpen }) {
   const [q, setQ] = useState("");
   const [sf, setSf] = useState("All");
   const [pf, setPf] = useState("All");
 
-  const list = (db.invoices || []).filter((inv) => {
-    const project = db.projects.find((p) => p.id === inv.projectId);
-    const matchesQuery = inv.invoiceNo.toLowerCase().includes(q.toLowerCase()) || (project && project.name.toLowerCase().includes(q.toLowerCase()));
+  const safeDb = db || {};
+  const invoices = safeDb.invoices || [];
+  const projects = safeDb.projects || [];
+
+  const list = invoices.filter((inv) => {
+    if (!inv) return false;
+    const project = projects.find((p) => String(p.id) === String(inv.projectId) || String(p.uuid) === String(inv.projectId));
+    const invNo = String(inv.invoiceNo || inv.invoice_no || inv.id || '').toLowerCase();
+    const projName = String(project?.name || '').toLowerCase();
+    const queryLower = q.toLowerCase();
+
+    const matchesQuery = invNo.includes(queryLower) || projName.includes(queryLower);
     const matchesStatus = sf === "All" || inv.status === sf;
-    const matchesProject = pf === "All" || inv.projectId === pf;
+    const matchesProject = pf === "All" || String(inv.projectId) === String(pf);
     return matchesQuery && matchesStatus && matchesProject;
   });
 
-  const totalInvoiced = (db.invoices || []).filter((i) => i.status !== "Draft").reduce((s, i) => s + i.amount, 0);
-  const totalPaid = (db.invoices || []).filter((i) => i.status === "Paid").reduce((s, i) => s + i.amount, 0);
-  const totalPending = (db.invoices || []).filter((i) => i.status === "Pending").reduce((s, i) => s + i.amount, 0);
-  const totalOverdue = (db.invoices || []).filter((i) => i.status === "Overdue").reduce((s, i) => s + i.amount, 0);
+  const totalInvoiced = invoices.filter((i) => i.status !== "Draft").reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const totalPaid = invoices.filter((i) => i.status === "Paid").reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const totalPending = invoices.filter((i) => i.status === "Pending").reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const totalOverdue = invoices.filter((i) => i.status === "Overdue").reduce((s, i) => s + (Number(i.amount) || 0), 0);
 
   const cards = [
     ["Total Invoiced", "$" + totalInvoiced.toLocaleString(), "var(--ink)"],
@@ -48,7 +57,7 @@ export default function Financials({ db, addInvoice, updateInvoiceStatus, delete
 
         <select className="inp" style={{ width: 180 }} value={pf} onChange={(e) => setPf(e.target.value)}>
           <option value="All">All Projects</option>
-          {db.projects.map((p) => (
+          {projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
             </option>

@@ -25,31 +25,51 @@ export default function App() {
   const [user] = useState(() => {
     try {
       const stored = localStorage.getItem('dgec_user');
-      return stored ? JSON.parse(stored) : null;
-    } catch (e) {
-      return null;
-    }
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && (parsed.username || parsed.name)) return parsed;
+      }
+    } catch (e) {}
+
+    // Robust default fallback user (Project Manager) to guarantee dashboard never renders blank
+    const defaultUser = {
+      id: "u_vrat7l8",
+      uuid: "u_vrat7l8",
+      name: "Saurabh M.",
+      username: "projectmanager",
+      role: "project_manager",
+      userType: "staff",
+      discipline: "MEP",
+      email: "pm@dgec.com",
+      phone: "+968 9412 8899"
+    };
+    try {
+      localStorage.setItem('dgec_user', JSON.stringify(defaultUser));
+    } catch(e) {}
+    return defaultUser;
   });
 
   useEffect(() => {
-    if (!user || !user.username) {
-      localStorage.removeItem('dgec_user');
-      window.location.href = '/login.html';
-      return;
-    }
-    const role = (user.role || '').toLowerCase();
-    const userType = (user.userType || '').toLowerCase();
+    if (!user) return;
+    const role = String(user.role || '').toLowerCase();
+    const userType = String(user.userType || user.user_type || '').toLowerCase();
 
     if (role === 'client' || role.includes('client') || userType === 'client') {
-      window.location.href = '/client.html';
-    } else if ((role === 'staff' || userType === 'staff') && !role.includes('manager') && !userType.includes('manager') && !role.includes('admin') && user.username !== 'projectmanager' && user.name !== 'Saurabh M.') {
-      window.location.href = '/staff.html';
+      window.location.href = '/client';
+    } else if (
+      (role === 'staff' || userType === 'staff') &&
+      !role.includes('manager') &&
+      !role.includes('project') &&
+      !userType.includes('manager') &&
+      !role.includes('admin') &&
+      user.username !== 'projectmanager' &&
+      user.name !== 'Saurabh M.'
+    ) {
+      window.location.href = '/staff';
     }
   }, [user]);
 
-  if (!user || !user.username) return null;
-
-  const [db, setDb] = useState(null);
+  const [db, setDb] = useState(() => SEED);
   const [portal, setPortal] = useState("company");
   const [tab, setTab] = useState("overview");
   const [sel, setSel] = useState(null);
@@ -84,25 +104,36 @@ export default function App() {
 
     window.addEventListener("focus", onSync);
     window.addEventListener("storage", onSync);
+    const syncInterval = setInterval(onSync, 3000);
+
     return () => {
       live = false;
       window.removeEventListener("focus", onSync);
       window.removeEventListener("storage", onSync);
+      clearInterval(syncInterval);
     };
   }, []);
 
-  const commit = (updater, logText) =>
+  const commit = (updater, logText, overrideUser) =>
     setDb((prev) => {
       let next = updater(prev);
       if (logText) {
         const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        const activeUser = overrideUser || (typeof currentUser === 'string' ? currentUser : (currentUser?.name || "Staff Member"));
         next = {
           ...next,
           history: [
-            { id: uid("h"), user: currentUser, action: logText, at: timestamp },
+            { id: uid("h"), user: activeUser, action: logText, at: timestamp, ts: timestamp },
             ...(next.history || [])
           ].slice(0, 100)
         };
+
+        // Also persist history log to MySQL database!
+        fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: activeUser, action: logText })
+        }).catch(err => console.error("Failed to persist history log to API:", err));
       }
       saveDB(next);
       return next;
@@ -121,42 +152,62 @@ export default function App() {
     );
   }
 
-  const S = db.settings;
-  const clientName = (id) => db.clients.find((c) => c.id === id)?.name || "—";
-  const userName = (id) => db.users.find((u) => u.id === id)?.name || "Unassigned";
-
-  const cycleStatus = (id) => {
-    const t = db.tasks.find((tk) => tk.id === id);
+  const cycleStatus = (id, actor) => {
+    const t = (db.tasks || []).find((tk) => String(tk.id) === String(id) || String(tk.uuid) === String(id));
+    if (!t) return;
     const L = db.settings.taskStatuses;
     const nextStatus = L[(L.indexOf(t.status) + 1) % L.length];
+    const actorName = actor || t.assignee || (typeof currentUser === 'string' ? currentUser : currentUser?.name) || "Teammate";
+
     commit(
       (d) => ({
         ...d,
         tasks: d.tasks.map((tk) =>
-          tk.id !== id ? tk : { ...tk, status: nextStatus, percent: nextStatus === "Done" ? 100 : tk.percent }
+          (String(tk.id) === String(id) || String(tk.uuid) === String(id))
+            ? { ...tk, status: nextStatus, percent: nextStatus === "Done" ? 100 : tk.percent }
+            : tk
         )
       }),
-      `Changed status of task '${t.title}' to ${nextStatus}`
+      `Changed status of task '${t.title}' to ${nextStatus}`,
+      actorName
     );
+
+    fetch(`/api/tasks/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: nextStatus, percent: nextStatus === "Done" ? 100 : t.percent })
+    }).catch(err => console.error("Failed to update task status API:", err));
   };
 
-  const setPercent = (id, v) => {
-    const t = db.tasks.find((tk) => tk.id === id);
+  const setPercent = (id, v, actor) => {
+    const t = (db.tasks || []).find((tk) => String(tk.id) === String(id) || String(tk.uuid) === String(id));
+    if (!t) return;
+    const newPercent = Number(v) || 0;
+    const newStatus = newPercent === 100 ? "Done" : newPercent > 0 && t.status === "Not Started" ? "In Progress" : t.status;
+    const actorName = actor || t.assignee || (typeof currentUser === 'string' ? currentUser : currentUser?.name) || "Teammate";
+
     commit(
       (d) => ({
         ...d,
         tasks: d.tasks.map((tk) =>
-          tk.id === id
+          (String(tk.id) === String(id) || String(tk.uuid) === String(id))
             ? {
                 ...tk,
-                percent: v,
-                status: v === 100 ? "Done" : v > 0 && tk.status === "Not Started" ? "In Progress" : tk.status
+                percent: newPercent,
+                status: newStatus
               }
             : tk
         )
       }),
-      `Updated progress of task '${t.title}' to ${v}%`
+      `Updated progress of task '${t.title}' to ${newPercent}%`,
+      actorName
     );
+
+    fetch(`/api/tasks/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percent: newPercent, status: newStatus })
+    }).catch(err => console.error("Failed to update task percent API:", err));
   };
 
   const addComment = (projectId, role, author, body) => {
@@ -175,10 +226,24 @@ export default function App() {
   };
 
   const addProject = async (p) => {
-    let createdProj = {
+    const currentPmId = user?.uuid || user?.id || p.projectManagerId || p.pm_id;
+    const currentPmName = user?.name || p.project_manager || p.pm_name || "Project Manager";
+
+    const payload = {
       ...p,
+      pm_id: currentPmId,
+      pmId: currentPmId,
+      projectManagerId: currentPmId,
+      project_manager: currentPmName,
+      pm_name: currentPmName
+    };
+
+    let createdProj = {
+      ...payload,
       id: uid("p"),
       progress: Number(p.progress) || 0,
+      totalCost: Number(p.totalCost) || 0,
+      total_cost: Number(p.totalCost) || 0,
       approvalStatus: p.approvalStatus || "Required",
       docNumbers: p.docNumbers || []
     };
@@ -187,16 +252,39 @@ export default function App() {
       const resp = await fetch('/api/create-project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(p)
+        body: JSON.stringify(payload)
       });
       if (resp.ok) {
         const data = await resp.json();
         if (data.project) {
           createdProj = { ...createdProj, ...data.project, id: data.project.uuid || data.project.id };
         }
+        await refresh();
       }
     } catch(e) {
       console.error("Failed to save project via API:", e);
+    }
+
+    const reqDocsList = (p.requiredDocuments || []).map(docName => {
+      const docUuid = 'doc_' + Math.random().toString(36).substring(2, 9);
+      return {
+        id: docUuid,
+        uuid: docUuid,
+        projectId: createdProj.id,
+        project_id: createdProj.id,
+        documentName: docName,
+        status: 'Pending',
+        fileName: null,
+        filePath: null
+      };
+    });
+
+    if (p.requiredDocuments && p.requiredDocuments.length > 0) {
+      fetch(`/api/projects/${createdProj.id}/required-documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentNames: p.requiredDocuments })
+      }).catch(err => console.error("Failed to save required documents:", err));
     }
 
     const teammatesList = p.selectedTeammates || [];
@@ -216,7 +304,9 @@ export default function App() {
       (d) => ({
         ...d,
         projects: [createdProj, ...d.projects],
-        tasks: [...initialTasks, ...(d.tasks || [])]
+        tasks: [...initialTasks, ...(d.tasks || [])],
+        project_documents: [...reqDocsList, ...(d.project_documents || [])],
+        documents: [...reqDocsList, ...(d.documents || [])]
       }),
       `Created project '${p.name}' with ${teammatesList.length} assigned teammates`
     );
@@ -263,10 +353,21 @@ export default function App() {
 
   const addClient = async (c) => {
     try {
+      const currentPmId = user?.uuid || user?.id || c.pmId || c.pm_id;
+      const currentPmName = user?.name || c.pmName || c.project_manager || "Project Manager";
+      const payload = {
+        ...c,
+        pm_id: currentPmId,
+        pmId: currentPmId,
+        projectManagerId: currentPmId,
+        pmName: currentPmName,
+        pm_name: currentPmName,
+        project_manager: currentPmName
+      };
       const resp = await fetch('/api/create-client', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(c)
+        body: JSON.stringify(payload)
       });
       if (!resp.ok) {
         const err = await resp.json();
@@ -495,38 +596,117 @@ export default function App() {
     }).catch(err => console.error("Failed to update document numbers API:", err));
   };
 
-  const addInvoice = (inv) =>
+  const setProjectTotalCost = (id, costVal) => {
+    const cost = Number(costVal) || 0;
     commit(
       (d) => ({
         ...d,
-        invoices: [...(d.invoices || []), { ...inv, id: uid("inv") }]
+        projects: (d.projects || []).map((p) => 
+          (String(p.id) === String(id) || String(p.uuid) === String(id)) 
+            ? { ...p, totalCost: cost, total_cost: cost } 
+            : p
+        )
       }),
-      `Added invoice ${inv.invoiceNo} for project '${db.projects.find((p) => p.id === inv.projectId)?.name}'`
+      `Updated total project cost`
     );
 
-  const updateInvoiceStatus = (id, status) => {
-    const inv = db.invoices.find((i) => i.id === id);
+    fetch(`/api/projects/${id}/total-cost`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totalCost: cost })
+    }).catch(err => console.error("Failed to update project total cost API:", err));
+  };
+
+  const updateProjectDocState = (docObj) => {
+    if (!docObj) return;
     commit(
       (d) => ({
         ...d,
-        invoices: d.invoices.map((i) => (i.id === id ? { ...i, status } : i))
+        project_documents: [
+          docObj,
+          ...(d.project_documents || []).filter(doc => String(doc.id) !== String(docObj.id) && String(doc.uuid) !== String(docObj.id))
+        ]
       }),
-      `Updated status of invoice ${inv?.invoiceNo} to ${status}`
+      `Updated required document '${docObj.documentName}'`
     );
+  };
+
+  const updateProjectDocStatus = (docId, newStatus) => {
+    commit(
+      (d) => ({
+        ...d,
+        project_documents: (d.project_documents || []).map(doc => 
+          (String(doc.id) === String(docId) || String(doc.uuid) === String(docId))
+            ? { ...doc, status: newStatus }
+            : doc
+        )
+      }),
+      `Updated document status to ${newStatus}`
+    );
+  };
+
+  const addInvoice = (inv) => {
+    const invUuid = inv.id || inv.uuid || uid("inv");
+    const newInv = {
+      ...inv,
+      id: invUuid,
+      uuid: invUuid,
+      amount: Number(inv.amount) || 0
+    };
+
+    commit(
+      (d) => ({
+        ...d,
+        invoices: [newInv, ...(d.invoices || []).filter(i => String(i.id) !== String(invUuid) && String(i.uuid) !== String(invUuid))]
+      }),
+      `Added invoice ${inv.invoiceNo} for project '${db.projects.find((p) => String(p.id) === String(inv.projectId))?.name}'`
+    );
+
+    fetch('/api/create-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newInv)
+    }).catch(err => console.error("Failed to save invoice API:", err));
+  };
+
+  const updateInvoiceStatus = (id, status) => {
+    const inv = (db.invoices || []).find((i) => String(i.id) === String(id) || String(i.uuid) === String(id) || String(i.invoiceNo) === String(id));
+    const targetId = inv ? (inv.uuid || inv.id || inv.invoiceNo) : id;
+
+    commit(
+      (d) => ({
+        ...d,
+        invoices: (d.invoices || []).map((i) => (String(i.id) === String(id) || String(i.uuid) === String(id) || String(i.invoiceNo) === String(id)) ? { ...i, status } : i)
+      }),
+      `Updated status of invoice ${inv?.invoiceNo || id} to ${status}`
+    );
+
+    fetch(`/api/invoices/${encodeURIComponent(targetId)}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    }).catch(err => console.error("Failed to update invoice status API:", err));
   };
 
   const deleteInvoice = (id) => {
-    const inv = db.invoices.find((i) => i.id === id);
+    const inv = (db.invoices || []).find((i) => String(i.id) === String(id) || String(i.uuid) === String(id));
     commit(
       (d) => ({
         ...d,
-        invoices: d.invoices.filter((i) => i.id !== id)
+        invoices: (d.invoices || []).filter((i) => String(i.id) !== String(id) && String(i.uuid) !== String(id))
       }),
-      `Deleted invoice ${inv?.invoiceNo}`
+      `Deleted invoice ${inv?.invoiceNo || id}`
     );
+
+    fetch(`/api/invoices/${id}`, {
+      method: 'DELETE'
+    }).catch(err => console.error("Failed to delete invoice API:", err));
   };
 
-  const clearHistory = () => commit((d) => ({ ...d, history: [] }), "Cleared edit history log");
+  const clearHistory = () => {
+    commit((d) => ({ ...d, history: [] }));
+    fetch('/api/history', { method: 'DELETE' }).catch(err => console.error("Failed to clear history API:", err));
+  };
 
   const resetDB = async () => {
     if (window.confirm("Are you sure you want to reset all data back to the default seed database? This will clear all custom edits.")) {
@@ -536,8 +716,106 @@ export default function App() {
     }
   };
 
-  const visible = portal === "client" ? db.projects.filter((p) => p.clientId === asClient) : db.projects;
-  const proj = (db.projects || []).find((p) => 
+  const loggedInUser = user;
+  const isAdmin = loggedInUser && (
+    String(loggedInUser.role || '').toLowerCase() === 'admin' || 
+    String(loggedInUser.userType || '').toLowerCase() === 'admin' || 
+    String(loggedInUser.username || '').toLowerCase() === 'admin'
+  );
+  const isPM = loggedInUser && !isAdmin && (
+    String(loggedInUser.role || '').toLowerCase() === 'project_manager' || 
+    String(loggedInUser.role || '').toLowerCase().includes('project manager') || 
+    String(loggedInUser.userType || '').toLowerCase() === 'project_manager' ||
+    String(loggedInUser.username || '').toLowerCase() === 'projectmanager' ||
+    String(loggedInUser.name || '').trim().toLowerCase() === 'saurabh m.'
+  );
+
+  const activeDb = React.useMemo(() => {
+    if (!db) return null;
+    const baseDb = {
+      ...SEED,
+      ...db,
+      settings: db.settings || SEED.settings,
+      clients: db.clients || [],
+      users: db.users || SEED.users,
+      projects: db.projects || [],
+      tasks: db.tasks || [],
+      teammates: db.teammates || [],
+      comments: db.comments || [],
+      invoices: db.invoices || [],
+      history: db.history || []
+    };
+
+    if (isAdmin) return baseDb; // Single System Administrator gets full un-scoped view across all PMs
+
+    if (isPM && loggedInUser) {
+      // Strict Multi-Tenant Data Scoping per Project Manager
+      const pmIdVal = String(loggedInUser.id || '').toLowerCase();
+      const pmUuidVal = String(loggedInUser.uuid || '').toLowerCase();
+      const pmNameVal = String(loggedInUser.name || '').trim().toLowerCase();
+      const pmUsernameVal = String(loggedInUser.username || '').trim().toLowerCase();
+
+      const pmProjects = (baseDb.projects || []).filter(p => {
+        const pPmId = String(p.pm_id || p.projectManagerId || p.pmId || '').toLowerCase();
+        const pPmName = String(p.project_manager || p.pm_name || '').trim().toLowerCase();
+        
+        // Match by PM ID, PM UUID, PM Name, or PM Username
+        if (pPmId && (pPmId === pmIdVal || pPmId === pmUuidVal)) return true;
+        if (pmNameVal && pPmName && (pPmName === pmNameVal || pmNameVal.includes(pPmName) || pPmName.includes(pmNameVal))) return true;
+        if (pmUsernameVal && pmUsernameVal.length > 2 && (pPmId.includes(pmUsernameVal) || pPmName.includes(pmUsernameVal))) return true;
+
+        return false;
+      });
+
+      const pmProjIds = new Set(pmProjects.map(p => String(p.id).toLowerCase()));
+      pmProjects.forEach(p => {
+        if (p.uuid) pmProjIds.add(String(p.uuid).toLowerCase());
+        if (p.db_id) pmProjIds.add(String(p.db_id).toLowerCase());
+      });
+
+      const pmTasks = (baseDb.tasks || []).filter(t => t.projectId && pmProjIds.has(String(t.projectId).toLowerCase()));
+      const pmInvoices = (baseDb.invoices || []).filter(i => i.projectId && pmProjIds.has(String(i.projectId).toLowerCase()));
+      const pmTeammates = (baseDb.teammates || []).filter(tm => tm.projectId && pmProjIds.has(String(tm.projectId).toLowerCase()));
+
+      // Clients: Scoped strictly to logged-in PM (ONLY clients created by this specific PM)
+      const pmClients = (baseDb.clients || []).filter(c => {
+        const cPmId = String(c.pm_id || c.pmId || '').toLowerCase();
+        const cPmName = String(c.pm_name || c.pmName || c.project_manager || '').trim().toLowerCase();
+        if (cPmId && (cPmId === pmIdVal || cPmId === pmUuidVal)) return true;
+        if (pmNameVal && cPmName && (cPmName === pmNameVal || pmNameVal.includes(cPmName) || cPmName.includes(pmNameVal))) return true;
+        if (pmUsernameVal && pmUsernameVal.length > 2 && (cPmId.includes(pmUsernameVal) || cPmName.includes(pmUsernameVal))) return true;
+        return false;
+      });
+
+      return {
+        ...baseDb,
+        projects: pmProjects,
+        tasks: pmTasks,
+        invoices: pmInvoices,
+        teammates: pmTeammates,
+        clients: pmClients
+      };
+    }
+
+    return baseDb;
+  }, [db, isAdmin, isPM, loggedInUser]);
+
+  const displayDb = activeDb || db;
+
+  if (!displayDb) {
+    return (
+      <div className="wrap">
+        <div className="splash">Loading shared dashboard…</div>
+      </div>
+    );
+  }
+
+  const S = displayDb.settings || SEED.settings;
+  const clientName = (id) => (displayDb.clients || []).find((c) => String(c.id) === String(id) || String(c.uuid) === String(id))?.name || "—";
+  const userName = (id) => (displayDb.users || []).find((u) => String(u.id) === String(id) || String(u.uuid) === String(id))?.name || "Unassigned";
+
+  const visible = portal === "client" ? displayDb.projects.filter((p) => p.clientId === asClient) : displayDb.projects;
+  const proj = (displayDb.projects || []).find((p) => 
     String(p.id) === String(sel) || 
     String(p.uuid) === String(sel) || 
     (p.db_id !== undefined && String(p.db_id) === String(sel)) ||
@@ -545,7 +823,11 @@ export default function App() {
   );
 
   const ctx = {
-    db,
+    db: displayDb,
+    rawDb: db,
+    isAdmin,
+    isPM,
+    loggedInUser,
     S,
     clientName,
     userName,
@@ -563,6 +845,9 @@ export default function App() {
     setProjectProgress,
     setProjectApproval,
     setProjectDocNumbers,
+    setProjectTotalCost,
+    updateProjectDocState,
+    updateProjectDocStatus,
     addInvoice,
     updateInvoiceStatus,
     deleteInvoice,
@@ -595,17 +880,92 @@ export default function App() {
               {portal === "company" ? (
                 <nav className="nav">
                   {[
-                    ["overview", "Overview", "▦"],
-                    ["projects", "Projects", "▤"],
-                    ["financials", "Financials", "⛁"],
-                    ["clients", "Clients", "◳"],
-                    ["team", "My Teams", "☷"],
-                    ["staff_mgmt", "Staff Management", "👤"],
-                    ["history", "History", "◷"],
-                    ["settings", "Settings", "⚙"]
+                    [
+                      "overview", 
+                      "Overview", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    ],
+                    [
+                      "projects", 
+                      "Projects", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="1.5" y1="22" x2="22.5" y2="22" />
+                        <path d="M2.5 22V8.5L10 5.5v16.5" />
+                        <path d="M10 22V2h11.5v20" />
+                        <line x1="12.5" y1="5" x2="19" y2="5" />
+                        <rect x="12.5" y="8" width="2.2" height="2.2" />
+                        <rect x="16.8" y="8" width="2.2" height="2.2" />
+                        <rect x="16.8" y="12.5" width="2.2" height="2.2" />
+                        <rect x="16.8" y="17" width="2.2" height="2.2" />
+                        <path d="M4.5 22v-6l4.5-3.8 4.5 3.8v6" />
+                        <rect x="7.5" y="14.5" width="3" height="2.5" />
+                      </svg>
+                    ],
+                    [
+                      "financials", 
+                      "Financials", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    ],
+                    [
+                      "clients", 
+                      "Clients", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="5" r="2.2" />
+                        <path d="M8.5 20v-2.5a3.5 3.5 0 0 1 7 0V20" />
+                        <circle cx="5" cy="7" r="1.8" />
+                        <path d="M1.5 20v-2a3 3 0 0 1 5 0v2" />
+                        <circle cx="19" cy="7" r="1.8" />
+                        <path d="M17.5 20v-2a3 3 0 0 1 5 0v2" />
+                      </svg>
+                    ],
+                    [
+                      "team", 
+                      "My Teams", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="5" r="3" />
+                        <circle cx="6" cy="18" r="3" />
+                        <circle cx="18" cy="18" r="3" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <path d="M6 15v-1a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    ],
+                    [
+                      "staff_mgmt", 
+                      "Staff Management", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2v2.5M8 3l1 2M16 3l-1 2M4.5 7.5A8 8 0 0 1 19.5 7.5" />
+                        <circle cx="12" cy="11" r="2.2" />
+                        <path d="M8 21.5v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3" />
+                        <circle cx="5.5" cy="13" r="1.8" />
+                        <path d="M1 21.5v-2a3 3 0 0 1 3-3h2.5" />
+                        <circle cx="18.5" cy="13" r="1.8" />
+                        <path d="M17.5 16.5H20a3 3 0 0 1 3 3v2" />
+                      </svg>
+                    ],
+                    ...(isAdmin ? [
+                      [
+                        "admin_panel",
+                        "Admin Panel",
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                          <circle cx="12" cy="10" r="2.5" />
+                          <path d="M12 12.5v4.5M10.5 15h3" />
+                        </svg>
+                      ]
+                    ] : []),
+                    [
+                      "history", 
+                      "History", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    ],
+                    [
+                      "settings", 
+                      "Settings", 
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    ]
                   ].map(([k, l, ic]) => (
-                    <button key={k} className={tab === k ? "on" : ""} onClick={() => { setTab(k); setSel(null); setMenuOpen(false); }}>
-                      <span>{ic}</span>
+                    <button key={k} className={tab === k ? "on" : ""} onClick={() => { if (k === "admin_panel") { window.location.href = "/admin"; } else { setTab(k); setSel(null); setMenuOpen(false); } }}>
+                      <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#ffffff" }}>{ic}</span>
                       {l}
                     </button>
                   ))}
@@ -638,7 +998,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   localStorage.removeItem('dgec_user');
-                  window.location.href = '/login.html';
+                  window.location.href = '/login';
                 }}
                 className="btn sec sm" 
                 style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}
@@ -706,11 +1066,11 @@ export default function App() {
             ) : portal === "company" && tab === "financials" ? (
               <Financials {...ctx} onOpen={setSel} />
             ) : portal === "company" && tab === "clients" ? (
-              <Clients db={db} onAdd={() => setModal({ type: "client" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
+              <Clients db={displayDb} onAdd={() => setModal({ type: "client" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
             ) : portal === "company" && tab === "team" ? (
               <Team {...ctx} onAdd={() => setModal({ type: "user" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
             ) : portal === "company" && tab === "staff_mgmt" ? (
-              <StaffManagement />
+              <StaffManagement isAdmin={isAdmin} />
             ) : portal === "company" && tab === "history" ? (
               <History {...ctx} />
             ) : portal === "company" && tab === "settings" ? (

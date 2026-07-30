@@ -115,6 +115,29 @@
   width: 100%;
 }
 
+.nav button .nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #ffffff !important;
+  fill: #ffffff !important;
+  opacity: 0.9;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.nav button .nav-icon svg {
+  stroke: #ffffff !important;
+  color: #ffffff !important;
+}
+
+.nav button.on .nav-icon,
+.nav button:hover .nav-icon {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
 .nav button.on {
   background: var(--line2);
   color: #fff;

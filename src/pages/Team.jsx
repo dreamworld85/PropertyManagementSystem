@@ -4,23 +4,28 @@ import Bar from '../components/Bar';
 import Tag from '../components/Tag';
 import { fmt, statusColor, barColor } from '../utils/helpers';
 
-export default function Team({ db, onAdd, onOpenProject, setModal, updateUser }) {
+export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUser }) {
   const [expandedProjectId, setExpandedProjectId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [editingTeammate, setEditingTeammate] = useState(null);
 
+  const safeDb = db || {};
+  const users = safeDb.users || [];
+  const projects = safeDb.projects || [];
+  const clients = safeDb.clients || [];
+
   // Get current PM info if available
-  const pmUser = db.users.find(u => 
+  const pmUser = users.find(u => 
     (u.role || "").toLowerCase().includes("project manager") || 
     (u.userType || "").toLowerCase().includes("project manager")
   ) || { name: "Project Manager", role: "Project Manager" };
 
-  const allProjects = db.projects || [];
+  const allProjects = projects;
   
   // Filter projects by search and status
   const filteredProjects = allProjects.filter(p => {
-    const client = db.clients.find(c => c.id === p.clientId);
+    const client = clients.find(c => c.id === p.clientId);
     const clientName = client ? client.name : "";
     const matchesSearch = (p.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
                           clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -45,7 +50,7 @@ export default function Team({ db, onAdd, onOpenProject, setModal, updateUser })
   const handleRemoveTeammate = (projectId, userId, e) => {
     if (e) e.stopPropagation();
     if (!window.confirm("Are you sure you want to remove this teammate from the project?")) return;
-    const targetUser = db.users.find(u => String(u.id) === String(userId) || String(u.uuid) === String(userId));
+    const targetUser = users.find(u => String(u.id) === String(userId) || String(u.uuid) === String(userId));
     const uName = targetUser?.name;
 
     commit((d) => {

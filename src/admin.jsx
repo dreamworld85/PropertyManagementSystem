@@ -8,6 +8,8 @@ import Modals from './components/Modals';
 import Avatar from './components/Avatar';
 import Admin from './pages/Admin';
 import StaffManagement from './pages/StaffManagement';
+import ProjectManagersAdmin from './pages/ProjectManagersAdmin';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 function AdminApp() {
@@ -23,7 +25,7 @@ function AdminApp() {
   useEffect(() => {
     if (!user || !user.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login.html';
+      window.location.href = '/login';
       return;
     }
     const role = (user.role || '').toLowerCase();
@@ -38,16 +40,16 @@ function AdminApp() {
 
     if (!isPMOrAdmin) {
       if (role.includes('client') || userType.includes('client')) {
-        window.location.href = '/client.html';
+        window.location.href = '/client';
       } else {
-        window.location.href = '/staff.html';
+        window.location.href = '/staff';
       }
     }
   }, [user]);
 
   if (!user || !user.username) return null;
 
-  const [db, setDb] = useState(null);
+  const [db, setDb] = useState(() => SEED);
   const [subTab, setSubTab] = useState("projects");
   const [selProjectId, setSelProjectId] = useState(null);
   const [selUserId, setSelUserId] = useState(null);
@@ -341,16 +343,20 @@ function AdminApp() {
     setModal
   };
 
+  const displayAdminUser = {
+    name: "Admin",
+    role: "System Administrator"
+  };
+
   return (
     <div className="wrap">
-      <style>{"@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&display=swap');"}</style>
       <div className="app">
-        {/* Sidebar matching Dashboard styling */}
+        {/* Sidebar matching Dashboard design */}
         <aside className="side">
           <div>
             <div className="brand" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div className="logo" style={{ background: "var(--accent2)" }}>⬢</div>
+                <div className="logo">⬡</div>
                 <div>
                   <div className="t1 disp">DGEC</div>
                   <div className="t2">Admin Portal</div>
@@ -363,18 +369,18 @@ function AdminApp() {
             
             <div className={menuOpen ? "side-nav-mobile-visible" : "side-nav-mobile-hidden"}>
               <nav className="nav">
-                <button className={subTab === "projects" ? "on" : ""} onClick={() => { setSubTab("projects"); setMenuOpen(false); }}>
-                  <span>📁</span> Projects Admin
-                </button>
-                <button className={subTab === "users" ? "on" : ""} onClick={() => { setSubTab("users"); setMenuOpen(false); }}>
-                  <span>👥</span> Teammates Admin
-                </button>
-                <button className={subTab === "clients" ? "on" : ""} onClick={() => { setSubTab("clients"); setMenuOpen(false); }}>
-                  <span>🏢</span> Clients Admin
-                </button>
-                <button className={subTab === "staff_mgmt" ? "on" : ""} onClick={() => { setSubTab("staff_mgmt"); setMenuOpen(false); }}>
-                  <span>👤</span> Staff Management
-                </button>
+                {[
+                  ["projects", "Projects Admin", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="1.5" y1="22" x2="22.5" y2="22" /><path d="M2.5 22V8.5L10 5.5v16.5" /><path d="M10 22V2h11.5v20" /><line x1="12.5" y1="5" x2="19" y2="5" /><rect x="12.5" y="8" width="2.2" height="2.2" /><rect x="16.8" y="8" width="2.2" height="2.2" /><rect x="16.8" y="12.5" width="2.2" height="2.2" /><rect x="16.8" y="17" width="2.2" height="2.2" /><path d="M4.5 22v-6l4.5-3.8 4.5 3.8v6" /><rect x="7.5" y="14.5" width="3" height="2.5" /></svg>],
+                  ["users", "Teammates Admin", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="3" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><line x1="12" y1="8" x2="12" y2="12" /><path d="M6 15v-1a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" /></svg>],
+                  ["clients", "Clients Admin", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="2.2" /><path d="M8.5 20v-2.5a3.5 3.5 0 0 1 7 0V20" /><circle cx="5" cy="7" r="1.8" /><path d="M1.5 20v-2a3 3 0 0 1 5 0v2" /><circle cx="19" cy="7" r="1.8" /><path d="M17.5 20v-2a3 3 0 0 1 5 0v2" /></svg>],
+                  ["pms", "Project Managers", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-5-4 5z" /><path d="M5 16h14v3H5z" /></svg>],
+                  ["staff_mgmt", "Staff Management", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2.5M8 3l1 2M16 3l-1 2M4.5 7.5A8 8 0 0 1 19.5 7.5" /><circle cx="12" cy="11" r="2.2" /><path d="M8 21.5v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3" /><circle cx="5.5" cy="13" r="1.8" /><path d="M1 21.5v-2a3 3 0 0 1 3-3h2.5" /><circle cx="18.5" cy="13" r="1.8" /><path d="M17.5 16.5H20a3 3 0 0 1 3 3v2" /></svg>]
+                ].map(([k, l, ic]) => (
+                  <button key={k} className={subTab === k ? "on" : ""} onClick={() => { setSubTab(k); setMenuOpen(false); }}>
+                    <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#ffffff" }}>{ic}</span>
+                    {l}
+                  </button>
+                ))}
               </nav>
             </div>
           </div>
@@ -382,20 +388,17 @@ function AdminApp() {
           <div className={menuOpen ? "side-nav-mobile-visible" : "side-nav-mobile-hidden"}>
             <div style={{ padding: "10px 10px 14px", borderTop: "1px solid var(--line2)", marginTop: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <Avatar name={user.name} size={36} />
+                <Avatar name={displayAdminUser.name} size={36} />
                 <div style={{ overflow: "hidden" }}>
-                  <div style={{ color: "#fff", fontWeight: 600, fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{user.name}</div>
-                  <div style={{ color: "var(--muted)", fontSize: 10.5 }}>{user.role}</div>
+                  <div style={{ color: "#fff", fontWeight: 600, fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{displayAdminUser.name}</div>
+                  <div style={{ color: "var(--muted)", fontSize: 10.5 }}>{displayAdminUser.role}</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <a href="/" className="btn sm" style={{ background: "var(--line2)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, textDecoration: "none", fontSize: 12, padding: "8px", borderRadius: 9, width: "100%", fontWeight: 600, boxSizing: "border-box" }}>
-                  ← Main Dashboard
-                </a>
                 <button 
                   onClick={() => {
                     localStorage.removeItem('dgec_user');
-                    window.location.href = '/login.html';
+                    window.location.href = '/login';
                   }}
                   className="btn sec sm" 
                   style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}
@@ -411,32 +414,6 @@ function AdminApp() {
         <main className="main">
           <div className="topbar">
             <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-              <button 
-                onClick={() => {
-                  if (window.history.length > 1) {
-                    window.history.back();
-                  } else {
-                    window.location.href = '/';
-                  }
-                }}
-                className="btn sec sm" 
-                style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: 6, 
-                  fontWeight: 700, 
-                  fontSize: 12.5, 
-                  padding: "7px 14px", 
-                  background: "#fff", 
-                  border: "1px solid var(--line)",
-                  borderRadius: 9,
-                  color: "var(--ink)",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                  cursor: "pointer"
-                }}
-              >
-                ← Back
-              </button>
               <div>
                 <h1 className="disp" style={{ margin: 0 }}>
                   {subTab === "projects"
@@ -445,6 +422,8 @@ function AdminApp() {
                     ? "Teammates Administration"
                     : subTab === "clients"
                     ? "Clients Administration"
+                    : subTab === "pms"
+                    ? "Project Managers Administration"
                     : "Staff Management"}
                 </h1>
                 <p style={{ margin: "2px 0 0 0" }}>System configuration, project setup, staff records, and user assignment portal.</p>
@@ -455,8 +434,10 @@ function AdminApp() {
             </button>
           </div>
           <div className="content">
-            {subTab === "staff_mgmt" ? (
-              <StaffManagement />
+            {subTab === "pms" ? (
+              <ProjectManagersAdmin db={db} refresh={refresh} />
+            ) : subTab === "staff_mgmt" ? (
+              <StaffManagement isAdmin={true} />
             ) : (
               <Admin
                 db={db}
@@ -488,6 +469,8 @@ function AdminApp() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AdminApp />
+    <ErrorBoundary>
+      <AdminApp />
+    </ErrorBoundary>
   </React.StrictMode>
 );

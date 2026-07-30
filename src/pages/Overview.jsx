@@ -1,16 +1,22 @@
 import React from 'react';
 import Bar from '../components/Bar';
 import { daysFrom, fmt, statusColor, barColor } from '../utils/helpers';
+import { SEED } from '../data/seed';
 
 export default function Overview({ db, clientName, userName, onOpen }) {
-  const active = db.projects.filter((p) => p.status === "Active").length;
-  const open = db.tasks.filter((t) => t.status !== "Done");
+  const safeDb = db || {};
+  const projects = safeDb.projects || [];
+  const tasks = safeDb.tasks || [];
+  const settings = safeDb.settings || SEED.settings;
+
+  const active = projects.filter((p) => p.status === "Active").length;
+  const open = tasks.filter((t) => t.status !== "Done");
   const dueSoon = open.filter((t) => {
     const dd = daysFrom(t.target);
     return dd >= 0 && dd <= 7;
   }).length;
   const overdue = open.filter((t) => daysFrom(t.target) < 0).length;
-  const list = db.projects.filter((p) => p.status !== "Closed");
+  const list = projects.filter((p) => p.status !== "Closed");
   const avg = Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / Math.max(1, list.length));
 
   const cards = [
@@ -20,7 +26,7 @@ export default function Overview({ db, clientName, userName, onOpen }) {
     ["Avg. Progress", avg + "%", "var(--green)"]
   ];
 
-  const upcomingProjects = [...db.projects]
+  const upcomingProjects = [...projects]
     .filter((p) => p.status !== "Closed")
     .sort((a, b) => {
       const dateA = new Date(a.end || a.end_date || '2099-12-31');
@@ -43,7 +49,7 @@ export default function Overview({ db, clientName, userName, onOpen }) {
       <div className="split-2-1">
         <div className="card" style={{ padding: 20 }}>
           <div className="h3 disp">Projects by progress</div>
-          {db.projects
+          {projects
             .filter((p) => p.status !== "Closed")
             .sort((a, b) => b.progress - a.progress)
             .slice(0, 8)
@@ -51,7 +57,7 @@ export default function Overview({ db, clientName, userName, onOpen }) {
               <button key={p.id} onClick={() => onOpen(p.id)} style={{ textAlign: "left", width: "100%", marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyGroup: "space-between", justifyContent: "space-between", marginBottom: 5 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 500, fontSize: 13.5 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 99, background: statusColor(p.status, db.settings.projectStatuses) }} />
+                    <span style={{ width: 7, height: 7, borderRadius: 99, background: statusColor(p.status, settings.projectStatuses) }} />
                     {p.name}
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>

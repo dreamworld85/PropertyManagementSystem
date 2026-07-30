@@ -2,17 +2,24 @@ import React, { useState } from 'react';
 import Tag from '../components/Tag';
 import Bar from '../components/Bar';
 import { statusColor, barColor } from '../utils/helpers';
+import { SEED } from '../data/seed';
 
-export default function Projects({ company, projects, db, onOpen, onNew }) {
+export default function Projects({ company, projects = [], db, onOpen, onNew }) {
   const [q, setQ] = useState("");
   const [sf, setSf] = useState("All");
-  const list = projects.filter((p) => (sf === "All" || p.status === sf) && p.name.toLowerCase().includes(q.toLowerCase()));
+
+  const safeDb = db || {};
+  const safeSettings = safeDb.settings || SEED.settings;
+  const projectStatuses = safeSettings.projectStatuses || SEED.settings.projectStatuses;
+  const approvalStatuses = safeSettings.approvalStatuses || SEED.settings.approvalStatuses;
+
+  const list = (projects || []).filter((p) => (sf === "All" || p.status === sf) && (p.name || '').toLowerCase().includes(q.toLowerCase()));
 
   return (
     <div>
       {/* Client Assignment Notifications Banner for Project Manager */}
       {(() => {
-        const clientNotifications = (db.history || []).filter(h => h.action && h.action.includes("Project Manager for Client"));
+        const clientNotifications = (safeDb.history || []).filter(h => h.action && h.action.includes("Project Manager for Client"));
         if (clientNotifications.length === 0) return null;
         return (
           <div style={{ marginBottom: 16, padding: "14px 18px", background: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)", borderRadius: 12, border: "1px solid #6ee7b7", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -38,7 +45,7 @@ export default function Projects({ company, projects, db, onOpen, onNew }) {
           <input placeholder="Search projects…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <select className="inp" style={{ width: 140 }} value={sf} onChange={(e) => setSf(e.target.value)}>
-          {["All", ...db.settings.projectStatuses].map((s) => (
+          {["All", ...projectStatuses].map((s) => (
             <option key={s}>{s}</option>
           ))}
         </select>
@@ -59,19 +66,31 @@ export default function Projects({ company, projects, db, onOpen, onNew }) {
           <span>Progress</span>
         </div>
         {list.map((p) => {
-          const open = db.tasks.filter((t) => t.projectId === p.id && t.status !== "Done").length;
+          const open = (safeDb.tasks || []).filter((t) => t.projectId === p.id && t.status !== "Done").length;
           return (
             <button key={p.id} className="trow body" onClick={() => onOpen(p.id)}>
               <span>
                 <span className="pname">{p.name}</span>
                 {open > 0 && <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>{open} open</span>}
               </span>
-              <span style={{ fontSize: 13.5 }}>{db.clients.find((c) => c.id === p.clientId)?.name || "—"}</span>
+              <span style={{ fontSize: 13.5 }}>
+                {(() => {
+                  if (p.clientName && p.clientName.trim()) return p.clientName;
+                  if (p.client && typeof p.client === 'string' && p.client.trim()) return p.client;
+                  const cVal = String(p.clientId || p.client_id || '').toLowerCase();
+                  if (!cVal) return "—";
+                  const found = (safeDb.clients || []).find(c => 
+                    String(c.id).toLowerCase() === cVal || 
+                    String(c.uuid || '').toLowerCase() === cVal ||
+                    String(c.name || '').trim().toLowerCase() === cVal
+                  );
+                  return found ? found.name : (p.clientName || "—");
+                })()}
+              </span>
               <span className="muted" style={{ fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }} title={(p.docNumbers || []).join(", ")}>
                 {(p.docNumbers || []).join(", ") || "—"}
               </span>
               <span>
-                <Tag label={p.approvalStatus || "Required"} color={statusColor(p.approvalStatus || "Required", db.settings.approvalStatuses)} />
               </span>
               <span>
                 <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />

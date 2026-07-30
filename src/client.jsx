@@ -6,6 +6,7 @@ import { uid, statusColor, barColor, fmt } from './utils/helpers';
 import Avatar from './components/Avatar';
 import Tag from './components/Tag';
 import Bar from './components/Bar';
+import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
 function ClientPortal() {
@@ -21,7 +22,7 @@ function ClientPortal() {
   useEffect(() => {
     if (!sessionUser || !sessionUser.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login.html';
+      window.location.href = '/login';
       return;
     }
     const role = (sessionUser.role || '').toLowerCase();
@@ -29,16 +30,16 @@ function ClientPortal() {
 
     if (role !== 'client' && !role.includes('client') && userType !== 'client' && role !== 'admin' && userType !== 'admin') {
       if (role.includes('manager') || userType.includes('manager') || sessionUser.username === 'projectmanager' || sessionUser.name === 'Saurabh M.') {
-        window.location.href = '/index.html';
+        window.location.href = '/';
       } else if (role === 'staff' || userType === 'staff') {
-        window.location.href = '/staff.html';
+        window.location.href = '/staff';
       }
     }
   }, [sessionUser]);
 
   if (!sessionUser || !sessionUser.username) return null;
 
-  const [db, setDb] = useState(null);
+  const [db, setDb] = useState(() => SEED);
   const [selProjectId, setSelProjectId] = useState(null);
   const [chatText, setChatText] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -156,11 +157,21 @@ function ClientPortal() {
     );
   }
 
-  // Helper to find Project Manager details for a given project ID (Saurabh M.)
+  // Helper to find Project Manager details for a given project ID
   const getProjectManager = (projId) => {
-    if (!db || !db.users) return { name: "Saurabh M.", role: "Project Manager - MEP", discipline: "MEP", phone: "+968 9412 8899", email: "pm@dgec.com" };
-    const pmUser = db.users.find(u => u.name === "Saurabh M." || (u.role && u.role.toLowerCase().includes("project manager")));
-    return pmUser || { name: "Saurabh M.", role: "Project Manager - MEP", discipline: "MEP", phone: "+968 9412 8899", email: "pm@dgec.com" };
+    if (!db || !db.projects) return { name: "Project Manager", role: "Project Manager" };
+    const proj = (db.projects || []).find(p => String(p.id) === String(projId) || String(p.uuid) === String(projId));
+    if (proj) {
+      if (proj.project_manager) return { name: proj.project_manager, role: "Project Manager" };
+      if (proj.pm_name) return { name: proj.pm_name, role: "Project Manager" };
+      const pmId = proj.pm_id || proj.projectManagerId;
+      if (pmId) {
+        const pmUser = (db.users || []).find(u => String(u.id) === String(pmId) || String(u.uuid) === String(pmId));
+        if (pmUser) return pmUser;
+      }
+    }
+    const pmUser = (db.users || []).find(u => u.role && u.role.toLowerCase().includes("project manager"));
+    return pmUser || { name: "Project Manager", role: "Project Manager" };
   };
 
   // Helper to get assigned engineering teammates for a project
@@ -295,7 +306,16 @@ function ClientPortal() {
           <div>
             <div className="brand" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div className="logo" style={{ background: "var(--accent)" }}>⬡</div>
+                <div className="logo" style={{ background: "var(--accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="5" r="2.2" />
+                    <path d="M8.5 20v-2.5a3.5 3.5 0 0 1 7 0V20" />
+                    <circle cx="5" cy="7" r="1.8" />
+                    <path d="M1.5 20v-2a3 3 0 0 1 5 0v2" />
+                    <circle cx="19" cy="7" r="1.8" />
+                    <path d="M17.5 20v-2a3 3 0 0 1 5 0v2" />
+                  </svg>
+                </div>
                 <div>
                   <div className="t1 disp">Client Portal</div>
                   <div className="t2">Engineering Control</div>
@@ -323,7 +343,9 @@ function ClientPortal() {
               <nav className="nav" style={{ maxHeight: "45vh", overflowY: "auto" }}>
                 {clientProjects.map(p => (
                   <button key={p.id} className={selectedProj?.id === p.id ? "on" : ""} onClick={() => { setSelProjectId(p.id); setMenuOpen(false); }}>
-                    <span>▦</span> {p.name}
+                    <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="1.5" y1="22" x2="22.5" y2="22" /><path d="M2.5 22V8.5L10 5.5v16.5" /><path d="M10 22V2h11.5v20" /><line x1="12.5" y1="5" x2="19" y2="5" /><rect x="12.5" y="8" width="2.2" height="2.2" /><rect x="16.8" y="8" width="2.2" height="2.2" /></svg>
+                    </span> {p.name}
                   </button>
                 ))}
                 {clientProjects.length === 0 && (
@@ -338,12 +360,12 @@ function ClientPortal() {
               <button 
                 onClick={() => {
                   localStorage.removeItem('dgec_user');
-                  window.location.href = '/login.html';
+                  window.location.href = '/login';
                 }}
                 className="btn sec sm" 
-                style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer" }}
+                style={{ width: "100%", padding: "8px", background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.25)", color: "#f87171", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
               >
-                🚪 Log Out
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg> Log Out
               </button>
             </div>
           </div>
@@ -361,7 +383,7 @@ function ClientPortal() {
                       window.history.back();
                     } else {
                       localStorage.removeItem('dgec_user');
-                      window.location.href = '/login.html';
+                      window.location.href = '/login';
                     }
                   }}
                   className="btn sec sm"
@@ -628,6 +650,8 @@ function ClientPortal() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ClientPortal />
+    <ErrorBoundary>
+      <ClientPortal />
+    </ErrorBoundary>
   </React.StrictMode>
 );

@@ -1,13 +1,14 @@
-import './bootstrap.js';
 import express from 'express';
 import cors from 'cors';
 import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
 import fs from 'fs';
-import path from 'path';
 import bcrypt from 'bcryptjs';
 import { uid } from './src/utils/helpers.js';
 import { SEED } from './src/data/seed.js';
 import { query, exec } from './src/utils/mysql.js';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -83,6 +84,11 @@ app.get('/api/db', async (req, res) => {
           db_id: p.id,
           id: pId,
           uuid: pId,
+          pm_id: p.pm_id || p.projectManagerId || null,
+          pmId: p.pm_id || p.projectManagerId || null,
+          projectManagerId: p.pm_id || p.projectManagerId || null,
+          project_manager: p.project_manager || p.pm_name || '',
+          pm_name: p.project_manager || p.pm_name || '',
           clientId: p.client_id !== undefined ? p.client_id : p.clientId,
           client_id: p.client_id !== undefined ? p.client_id : p.clientId,
           clientName: p.client_name || p.clientName || '',
@@ -92,6 +98,8 @@ app.get('/api/db', async (req, res) => {
           start: p.start_date || p.start || '2026-06-08',
           end: p.end_date || p.end || '2026-12-31',
           approvalStatus: p.approval_status || p.approvalStatus || 'Required',
+          totalCost: Number(p.total_cost !== undefined ? p.total_cost : (p.totalCost || 0)),
+          total_cost: Number(p.total_cost !== undefined ? p.total_cost : (p.totalCost || 0)),
           docNumbers: parsedDocs,
           desc: p.description || p.desc || ''
         });
@@ -99,15 +107,21 @@ app.get('/api/db', async (req, res) => {
     });
     const formattedProjects = Array.from(uniqueProjectsMap.values());
 
-    // Deduplicate clients by lowercased name
+    // Deduplicate clients by lowercased name (prioritizing non-null pm_id)
     const uniqueClientsMap = new Map();
     (clients || []).forEach(c => {
       const key = (c.name || '').trim().toLowerCase();
-      if (key && !uniqueClientsMap.has(key)) {
+      if (!key) return;
+      const existing = uniqueClientsMap.get(key);
+      if (!existing || (!existing.pm_id && c.pm_id)) {
         uniqueClientsMap.set(key, {
           ...c,
           id: c.id,
           uuid: c.uuid || String(c.id),
+          pm_id: c.pm_id || c.pmId || null,
+          pmId: c.pm_id || c.pmId || null,
+          pm_name: c.pm_name || c.pmName || c.project_manager || '',
+          pmName: c.pm_name || c.pmName || c.project_manager || '',
           contactName: c.contact_name || c.contactName || c.name,
           contact: c.email || c.contact || ''
         });
@@ -156,14 +170,93 @@ app.get('/api/db', async (req, res) => {
       };
     });
 
-    // Merge teammates into users so getProjectTeammates and user rosters include all teammates
+    // Merge project_managers, staff members, and teammates into users
     const allUsersRaw = (users && users.length > 0) ? users : SEED.users;
     const combinedUsers = [...allUsersRaw];
+
+    const projectManagers = await query('SELECT * FROM project_managers ORDER BY id DESC').catch(() => []);
+    (projectManagers || []).forEach(pm => {
+      if (pm.name && !combinedUsers.some(u => String(u.id) === String(pm.id) || String(u.uuid) === String(pm.uuid) || String(u.username || '').toLowerCase() === String(pm.username || '').toLowerCase())) {
+        combinedUsers.push({
+          id: pm.uuid || `pm_${pm.id}`,
+          uuid: pm.uuid || `pm_${pm.id}`,
+          name: pm.name,
+          username: pm.username,
+          role: 'project_manager',
+          user_type: 'staff',
+          userType: 'staff',
+          discipline: pm.discipline || 'MEP',
+          email: pm.email || '',
+          phone: pm.phone || ''
+        });
+      }
+    });
+
+    (staffMembers || []).forEach(sm => {
+      if (sm.name && !combinedUsers.some(u => String(u.id) === String(sm.id) || String(u.uuid) === String(sm.uuid) || String(u.name).toLowerCase() === String(sm.name).toLowerCase())) {
+        combinedUsers.push({
+          id: sm.uuid || `s_${sm.id}`,
+          uuid: sm.uuid || `s_${sm.id}`,
+          name: sm.name,
+          role: sm.role || 'Staff',
+          user_type: 'staff',
+          userType: 'staff',
+          discipline: sm.role || 'Engineering',
+          email: sm.email || '',
+          phone: sm.contact_number || sm.phone || ''
+        });
+      }
+    });
+
     formattedTeammates.forEach(tm => {
-      if (!combinedUsers.some(u => String(u.id) === String(tm.id) || String(u.uuid) === String(tm.id) || u.name === tm.name)) {
+      if (tm.name && !combinedUsers.some(u => String(u.id) === String(tm.id) || String(u.uuid) === String(tm.id) || String(u.name).toLowerCase() === String(tm.name).toLowerCase())) {
         combinedUsers.push(tm);
       }
     });
+
+    const projectDocs = await query('SELECT * FROM project_documents ORDER BY id DESC').catch(() => []);
+    const formattedProjectDocs = (projectDocs || []).map(doc => {
+      const proj = formattedProjects.find(p => String(p.id) === String(doc.project_id) || String(p.db_id) === String(doc.project_id));
+      return {
+        id: doc.uuid || `doc_${doc.id}`,
+        uuid: doc.uuid || `doc_${doc.id}`,
+        db_id: doc.id,
+        projectId: proj ? proj.id : String(doc.project_id),
+        project_id: proj ? proj.id : String(doc.project_id),
+        documentName: doc.document_name,
+        fileName: doc.file_name || null,
+        filePath: doc.file_path || null,
+        status: doc.status || 'Pending',
+        uploadedAt: doc.uploaded_at || null,
+        createdAt: doc.created_at
+      };
+    });
+
+    const dbInvoices = await query('SELECT * FROM invoices ORDER BY id DESC').catch(() => []);
+    const formattedInvoices = (dbInvoices || []).map(inv => {
+      const proj = formattedProjects.find(p => String(p.id) === String(inv.project_id) || String(p.db_id) === String(inv.project_id));
+      return {
+        id: inv.uuid || `inv_${inv.id}`,
+        uuid: inv.uuid || `inv_${inv.id}`,
+        db_id: inv.id,
+        projectId: proj ? proj.id : String(inv.project_id),
+        project_id: proj ? proj.id : String(inv.project_id),
+        invoiceNo: inv.invoice_no,
+        amount: Number(inv.amount) || 0,
+        dueDate: inv.due_at || inv.due_date || '2026-12-31',
+        status: inv.status || 'Pending',
+        createdAt: inv.created_at
+      };
+    });
+
+    const dbHistory = await query('SELECT * FROM history ORDER BY id DESC LIMIT 100').catch(() => []);
+    const formattedHistory = (dbHistory || []).map(h => ({
+      id: h.uuid || `h_${h.id}`,
+      user: h.user_name || h.user || 'System',
+      action: h.action,
+      at: h.created_at ? new Date(h.created_at).toISOString().slice(0, 16).replace('T', ' ') : new Date().toISOString().slice(0, 16).replace('T', ' '),
+      ts: h.created_at ? new Date(h.created_at).toISOString().slice(0, 16).replace('T', ' ') : new Date().toISOString().slice(0, 16).replace('T', ' ')
+    }));
 
     const responseDb = {
       users: combinedUsers,
@@ -172,8 +265,10 @@ app.get('/api/db', async (req, res) => {
       clients: formattedClients,
       projects: formattedProjects,
       tasks: formattedTasks,
-      invoices: (invoices && invoices.length > 0) ? invoices : (SEED.invoices || []),
-      history: (history && history.length > 0) ? history : (SEED.history || []),
+      project_documents: formattedProjectDocs,
+      documents: formattedProjectDocs,
+      invoices: (formattedInvoices && formattedInvoices.length > 0) ? formattedInvoices : (SEED.invoices || []),
+      history: (formattedHistory && formattedHistory.length > 0) ? formattedHistory : (SEED.history || []),
       settings
     };
 
@@ -184,10 +279,19 @@ app.get('/api/db', async (req, res) => {
   }
 });
 
-// GET All Clients Endpoint (Deduplicated)
+// GET All Clients Endpoint (Deduplicated & Scoped by pm_id)
 app.get('/api/clients', async (req, res) => {
   try {
-    const clients = await query('SELECT * FROM clients ORDER BY id DESC').catch(() => []);
+    const { pm_id, pmId, userId } = req.query;
+    const targetPmId = pm_id || pmId || userId;
+
+    let clients = [];
+    if (targetPmId) {
+      clients = await query('SELECT * FROM clients WHERE pm_id = ? ORDER BY id DESC', [targetPmId]).catch(() => []);
+    } else {
+      clients = await query('SELECT * FROM clients ORDER BY id DESC').catch(() => []);
+    }
+
     const uniqueMap = new Map();
     (clients || []).forEach(c => {
       const key = (c.name || '').trim().toLowerCase();
@@ -196,6 +300,8 @@ app.get('/api/clients', async (req, res) => {
           ...c,
           id: c.id,
           uuid: c.uuid || String(c.id),
+          pm_id: c.pm_id || null,
+          pmId: c.pm_id || null,
           contactName: c.contact_name || c.contactName || c.name,
           contact: c.email || c.contact || ''
         });
@@ -204,6 +310,65 @@ app.get('/api/clients', async (req, res) => {
     res.json({ success: true, clients: Array.from(uniqueMap.values()) });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch clients', details: err.message });
+  }
+});
+
+// GET /api/projects Endpoint (Scoped strictly by pm_id when provided)
+app.get('/api/projects', async (req, res) => {
+  try {
+    const { pm_id, pmId, userId } = req.query;
+    const targetPmId = pm_id || pmId || userId;
+
+    let projects = [];
+    if (targetPmId) {
+      projects = await query('SELECT * FROM projects WHERE pm_id = ? ORDER BY id DESC', [targetPmId]).catch(() => []);
+    } else {
+      projects = await query('SELECT * FROM projects ORDER BY id DESC').catch(() => []);
+    }
+
+    const formattedProjects = (projects || []).map(p => ({
+      ...p,
+      id: p.uuid || String(p.id),
+      uuid: p.uuid || String(p.id),
+      pm_id: p.pm_id || null,
+      pmId: p.pm_id || null,
+      projectManagerId: p.pm_id || null,
+      project_manager: p.project_manager || null,
+      clientId: p.client_id,
+      totalCost: Number(p.total_cost) || 0,
+      start: p.start_date || p.start || '2026-06-08',
+      end: p.end_date || p.end || '2026-12-31',
+      desc: p.description || p.desc || ''
+    }));
+
+    res.json({ success: true, projects: formattedProjects });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch projects', details: err.message });
+  }
+});
+
+// GET /api/teams Endpoint (Scoped strictly to active PM projects)
+app.get('/api/teams', async (req, res) => {
+  try {
+    const { pm_id, pmId, userId } = req.query;
+    const targetPmId = pm_id || pmId || userId;
+
+    let pmProjUuids = [];
+    if (targetPmId) {
+      const projs = await query('SELECT uuid, id FROM projects WHERE pm_id = ?', [targetPmId]).catch(() => []);
+      pmProjUuids = projs.map(p => p.uuid || String(p.id));
+    }
+
+    let teammates = await query('SELECT * FROM teammates ORDER BY id DESC').catch(() => []);
+    if (targetPmId && pmProjUuids.length > 0) {
+      teammates = teammates.filter(tm => pmProjUuids.includes(String(tm.project_id)));
+    } else if (targetPmId && pmProjUuids.length === 0) {
+      teammates = [];
+    }
+
+    res.json({ success: true, teammates });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch teams', details: err.message });
   }
 });
 
@@ -264,9 +429,21 @@ app.post('/api/db', async (req, res) => {
           const cRows = await query('SELECT id FROM clients WHERE uuid = ? OR id = ? OR name = ?', [cid, cid, cid]);
           if (cRows && cRows.length > 0) cid = cRows[0].id;
 
+          const pPmId = p.pm_id || p.pmId || p.projectManagerId || null;
+          const pPmName = p.project_manager || p.pm_name || p.pmName || null;
+
           await query(
-            'INSERT INTO projects (uuid, name, client_id, status, category, start_date, end_date, progress, approval_status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status), progress=VALUES(progress), category=VALUES(category), description=VALUES(description)',
-            [p.id || p.uuid, p.name, cid, p.status, p.category, p.start, p.end, p.progress || 0, p.approvalStatus || 'Required', p.desc || '']
+            `INSERT INTO projects (uuid, name, client_id, status, category, start_date, end_date, progress, approval_status, description, pm_id, project_manager) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+             ON DUPLICATE KEY UPDATE 
+               name=VALUES(name), 
+               status=VALUES(status), 
+               progress=VALUES(progress), 
+               category=VALUES(category), 
+               description=VALUES(description),
+               pm_id = IF(VALUES(pm_id) IS NOT NULL AND VALUES(pm_id) != '', VALUES(pm_id), pm_id),
+               project_manager = IF(VALUES(project_manager) IS NOT NULL AND VALUES(project_manager) != '', VALUES(project_manager), project_manager)`,
+            [p.id || p.uuid, p.name, cid, p.status, p.category, p.start, p.end, p.progress || 0, p.approvalStatus || 'Required', p.desc || '', pPmId, pPmName]
           );
         } catch(e) {}
       }
@@ -274,9 +451,19 @@ app.post('/api/db', async (req, res) => {
     if (db && db.clients && db.clients.length > 0) {
       for (const c of db.clients) {
         try {
+          const cPmId = c.pm_id || c.pmId || c.projectManagerId || null;
+          const cPmName = c.pm_name || c.pmName || c.project_manager || null;
+
           await query(
-            'INSERT INTO clients (uuid, name, sector, contact_name, email, phone) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone)',
-            [c.id || c.uuid, c.name, c.sector || 'General', c.contactName || c.name, c.email || c.contact, c.phone || '']
+            `INSERT INTO clients (uuid, name, sector, contact_name, email, phone, pm_id, pm_name) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+             ON DUPLICATE KEY UPDATE 
+               name=VALUES(name), 
+               email=VALUES(email), 
+               phone=VALUES(phone),
+               pm_id = IF(VALUES(pm_id) IS NOT NULL AND VALUES(pm_id) != '', VALUES(pm_id), pm_id),
+               pm_name = IF(VALUES(pm_name) IS NOT NULL AND VALUES(pm_name) != '', VALUES(pm_name), pm_name)`,
+            [c.id || c.uuid, c.name, c.sector || 'General', c.contactName || c.name, c.email || c.contact, c.phone || '', cPmId, cPmName]
           );
         } catch(e) {}
       }
@@ -335,60 +522,72 @@ app.post('/api/db', async (req, res) => {
   }
 });
 
-// POST /api/create-project endpoint
-app.post('/api/create-project', async (req, res) => {
+
+
+// POST /api/create-pm endpoint (Admin View Only: Dedicated PM creation with credentials)
+app.post('/api/create-pm', async (req, res) => {
   try {
-    const { name, clientId, status, category, aor, start, end, progress, approvalStatus, desc } = req.body;
+    const { name, username, email, phone, password, discipline } = req.body;
     if (!name || !name.trim()) {
-      return res.status(400).json({ error: 'Project name is required' });
+      return res.status(400).json({ error: 'Project Manager Name is required.' });
     }
 
-    const uuid = 'p_' + Math.random().toString(36).substring(2, 9);
-    const projName = name.trim();
-    const projCategory = category || 'Full Engineering';
-    const projStatus = status || 'Active';
-    const projAor = aor || 'DGEC';
-    const projStart = start || new Date().toISOString().slice(0, 10);
-    const projEnd = end || '2026-12-31';
-    const projProgress = Number(progress) || 0;
-    const projApproval = approvalStatus || 'Required';
-    const projDesc = desc || '';
-    const rawClientVal = clientId || 'c7';
-
-    // Resolve numeric client ID to satisfy MySQL Foreign Key constraint
-    let clientIntId = null;
-    const clientRows = await query('SELECT id FROM clients WHERE uuid = ? OR id = ? OR name = ? ORDER BY id DESC', [rawClientVal, rawClientVal, rawClientVal]);
-    if (clientRows && clientRows.length > 0) {
-      clientIntId = clientRows[0].id;
-    } else {
-      const fallbackClient = await query('SELECT id FROM clients ORDER BY id DESC LIMIT 1');
-      if (fallbackClient && fallbackClient.length > 0) clientIntId = fallbackClient[0].id;
+    const pmName = name.trim();
+    let pmUsername = (username && username.trim()) ? username.trim().toLowerCase() : pmName.toLowerCase().replace(/\s+/g, '');
+    
+    const existingU = await query('SELECT id FROM users WHERE username = ?', [pmUsername]);
+    if (existingU && existingU.length > 0) {
+      pmUsername = pmUsername + '_' + Math.floor(100 + Math.random() * 900);
     }
 
+    const uuid = 'u_pm_' + Math.random().toString(36).substring(2, 9);
+    const pmEmail = email ? email.trim() : `${pmUsername}@dgec.com`;
+    const pmPhone = phone ? phone.trim() : '+968 9412 8899';
+    const pmPassword = password || 'Welcome_2026@';
+    const pmDiscipline = discipline || 'MEP';
+
+    const hash = await bcrypt.hash(pmPassword, 10);
+
+    // 1. Insert into project_managers table
     await query(
-      'INSERT INTO projects (uuid, name, client_id, status, category, start_date, end_date, progress, approval_status, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [uuid, projName, clientIntId, projStatus, projCategory, projStart, projEnd, projProgress, projApproval, projDesc]
-    );
+      `INSERT INTO project_managers (uuid, name, username, email, phone, discipline, password_hash, role) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'project_manager')`,
+      [uuid, pmName, pmUsername, pmEmail, pmPhone, pmDiscipline, hash]
+    ).catch(e => console.error("project_managers table insert error:", e));
 
-    const newProject = {
+    // 2. Insert into users table
+    await query(
+      `INSERT INTO users (uuid, name, username, email, phone, role, discipline, user_type, password_hash) 
+       VALUES (?, ?, ?, ?, ?, 'project_manager', ?, 'staff', ?)`,
+      [uuid, pmName, pmUsername, pmEmail, pmPhone, pmDiscipline, hash]
+    ).catch(e => console.error("users table insert error:", e));
+
+    const newPM = {
       id: uuid,
       uuid,
-      name: projName,
-      clientId: rawClientVal,
-      status: projStatus,
-      category: projCategory,
-      aor: projAor,
-      start: projStart,
-      end: projEnd,
-      progress: projProgress,
-      approvalStatus: projApproval,
-      desc: projDesc
+      name: pmName,
+      username: pmUsername,
+      email: pmEmail,
+      phone: pmPhone,
+      role: 'project_manager',
+      discipline: pmDiscipline,
+      userType: 'staff'
     };
 
-    res.json({ success: true, project: newProject });
+    return res.status(200).json({ success: true, user: newPM });
   } catch (err) {
-    console.error('Create Project Error:', err);
-    res.status(500).json({ error: 'Failed to insert project into database', details: err.message });
+    console.error("Error creating PM:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/project-managers endpoint (Admin View: Fetch all PMs from project_managers table)
+app.get('/api/project-managers', async (req, res) => {
+  try {
+    const pms = await query('SELECT id, uuid, name, username, email, phone, discipline, role, created_at FROM project_managers ORDER BY id DESC');
+    res.json({ success: true, projectManagers: pms });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch project managers', details: err.message });
   }
 });
 
@@ -396,6 +595,14 @@ app.post('/api/create-project', async (req, res) => {
 app.post('/api/create-user', async (req, res) => {
   try {
     const { name, username, password, role, roleTitle, discipline, disciplineGroup, userType, email, phone, projectId, taskName } = req.body;
+    
+    const uRole = role || roleTitle || 'Staff';
+
+    // Single-Admin Hierarchy Security Check
+    if (String(uRole).toLowerCase() === 'admin') {
+      return res.status(403).json({ error: 'Cannot create additional Admin users. System enforces a single administrator hierarchy.' });
+    }
+
     const uName = (name && name.trim()) ? name.trim() : (username && username.trim()) ? username.trim() : 'Staff Member';
     let uuid = req.body.uuid || req.body.id || ('u_' + Math.random().toString(36).substring(2, 9));
     let uUsername = (username && username.trim()) ? username.trim().toLowerCase() : uName.toLowerCase().replace(/\s+/g, '');
@@ -406,7 +613,6 @@ app.post('/api/create-user', async (req, res) => {
       uUsername = uUsername + '_' + Math.floor(100 + Math.random() * 900);
     }
 
-    const uRole = role || roleTitle || 'Staff';
     const uDiscipline = discipline || disciplineGroup || 'Structure';
     const uUserType = userType || 'staff';
     const uEmail = email || `${uUsername}@dgec.com`;
@@ -533,14 +739,24 @@ const handleLogin = async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    // 1. Check clients table first if username is a client
+    // 0. Check project_managers table first
     let record = null;
     let isClient = false;
+    let isPM = false;
 
-    const clientRows = await query('SELECT * FROM clients WHERE username = ? OR email = ? OR name = ?', [username, username, username]);
-    if (clientRows && clientRows.length > 0) {
-      record = clientRows[0];
-      isClient = true;
+    const pmRows = await query('SELECT * FROM project_managers WHERE username = ? OR email = ?', [username, username]);
+    if (pmRows && pmRows.length > 0) {
+      record = pmRows[0];
+      isPM = true;
+    }
+
+    // 1. Check clients table first if username is a client
+    if (!record) {
+      const clientRows = await query('SELECT * FROM clients WHERE username = ? OR email = ? OR name = ?', [username, username, username]);
+      if (clientRows && clientRows.length > 0) {
+        record = clientRows[0];
+        isClient = true;
+      }
     }
 
     // 2. Check admin table
@@ -576,7 +792,7 @@ const handleLogin = async (req, res) => {
       userPayload.role = 'Client';
       userPayload.userType = 'Client';
       userPayload.clientId = record.id || record.uuid;
-    } else if (username.toLowerCase() === 'projectmanager' || (userPayload.name && userPayload.name.toLowerCase() === 'saurabh m.') || userPayload.user_type === 'project_manager') {
+    } else if (isPM || userPayload.role === 'project_manager' || username.toLowerCase() === 'projectmanager' || (userPayload.name && userPayload.name.toLowerCase() === 'saurabh m.') || userPayload.user_type === 'project_manager') {
       userPayload.role = 'project_manager';
       userPayload.userType = 'project_manager';
     } else if (!userPayload.role) {
@@ -612,6 +828,10 @@ app.post('/api/staff', async (req, res) => {
     }
     if (!role || !role.trim()) {
       return res.status(400).json({ error: 'Role in company is required' });
+    }
+
+    if (String(role).toLowerCase() === 'admin') {
+      return res.status(403).json({ error: 'Cannot assign Admin role. System enforces a single administrator hierarchy.' });
     }
 
     const staffUuid = uuid || ('s_' + Math.random().toString(36).substring(2, 9));
@@ -744,13 +964,30 @@ app.post('/api/create-client', async (req, res) => {
     const clientContactName = contactName || name;
     const clientUsername = username?.trim() || '';
     const clientPassword = password?.trim() ? bcrypt.hashSync(password.trim(), 10) : '';
-    const targetPmId = projectManagerId || pmId || null;
+    let targetPmId = req.body.pm_id || req.body.pmId || req.body.projectManagerId || req.headers['x-pm-id'] || null;
+    let targetPmName = req.body.pm_name || req.body.pmName || req.body.project_manager || null;
+
+    if (targetPmId && !targetPmName) {
+      const pmRows = await query('SELECT name FROM project_managers WHERE uuid = ? OR id = ? UNION SELECT name FROM users WHERE uuid = ? OR id = ?', [targetPmId, targetPmId, targetPmId, targetPmId]).catch(() => []);
+      if (pmRows && pmRows.length > 0) targetPmName = pmRows[0].name;
+    }
+    if (!targetPmId && targetPmName) {
+      const pmRows = await query('SELECT uuid, id FROM project_managers WHERE name = ? UNION SELECT uuid, id FROM users WHERE name = ?', [targetPmName, targetPmName]).catch(() => []);
+      if (pmRows && pmRows.length > 0) targetPmId = pmRows[0].uuid || String(pmRows[0].id);
+    }
+    if (!targetPmId) {
+      const latestPm = await query('SELECT uuid, id, name FROM project_managers ORDER BY id DESC LIMIT 1').catch(() => []);
+      if (latestPm && latestPm.length > 0) {
+        targetPmId = latestPm[0].uuid || String(latestPm[0].id);
+        targetPmName = targetPmName || latestPm[0].name;
+      }
+    }
 
     // Insert directly into MySQL clients table
     await exec(
-      `INSERT INTO clients (uuid, name, sector, contact_name, email, phone, username, password, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Client')`,
-      [clientUuid, name.trim(), clientSector, clientContactName, clientEmail, clientPhone, clientUsername, clientPassword]
-    ).catch(e => console.error("Client table insert error:", e));
+      `INSERT INTO clients (uuid, name, sector, contact_name, email, phone, username, password, role, pm_id, pm_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Client', ?, ?)`,
+      [clientUuid, name.trim(), clientSector, clientContactName, clientEmail, clientPhone, clientUsername, clientPassword, targetPmId, targetPmName]
+    );
 
     // If login credentials were provided, also store in users table
     if (clientUsername && clientPassword) {
@@ -782,18 +1019,32 @@ app.post('/api/create-client', async (req, res) => {
   }
 });
 
-// GET All Clients Endpoint (Deduplicated)
+// GET All Clients Endpoint (Scoped strictly by pm_id when provided)
 app.get('/api/clients', async (req, res) => {
   try {
-    const clients = await query('SELECT * FROM clients ORDER BY id DESC').catch(() => []);
+    const { pm_id, pmId, userId } = req.query;
+    const targetPmId = pm_id || pmId || userId;
+
+    let clients = [];
+    if (targetPmId) {
+      clients = await query('SELECT * FROM clients WHERE pm_id = ? ORDER BY id DESC', [targetPmId]).catch(() => []);
+    } else {
+      clients = await query('SELECT * FROM clients ORDER BY id DESC').catch(() => []);
+    }
+
     const uniqueMap = new Map();
     (clients || []).forEach(c => {
       const key = (c.name || '').trim().toLowerCase();
-      if (key && !uniqueMap.has(key)) {
+      if (!key) return;
+      const existing = uniqueMap.get(key);
+      if (!existing || (!existing.pm_id && c.pm_id)) {
         uniqueMap.set(key, {
           ...c,
-          id: c.id,
+          id: c.uuid || String(c.id),
           uuid: c.uuid || String(c.id),
+          pm_id: c.pm_id || c.pmId || null,
+          pmId: c.pm_id || c.pmId || null,
+          pm_name: c.pm_name || c.pmName || '',
           contactName: c.contact_name || c.contactName || c.name,
           contact: c.email || c.contact || ''
         });
@@ -803,6 +1054,24 @@ app.get('/api/clients', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch clients', details: err.message });
   }
+});
+
+// Standard REST Alias Routes
+app.get('/clients', (req, res) => {
+  req.url = '/api/clients' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
+  app._router.handle(req, res);
+});
+app.get('/projects', (req, res) => {
+  req.url = '/api/projects' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
+  app._router.handle(req, res);
+});
+app.post('/clients', (req, res) => {
+  req.url = '/api/create-client';
+  app._router.handle(req, res);
+});
+app.post('/projects', (req, res) => {
+  req.url = '/api/create-project';
+  app._router.handle(req, res);
 });
 
 // DELETE Client Endpoint (Permanent deletion with safe constraint handling)
@@ -918,26 +1187,73 @@ app.post('/api/complete-invite', async (req, res) => {
 // Direct Project Creation Endpoint (Stores project and maps assigned teammates in MySQL)
 app.post('/api/create-project', async (req, res) => {
   try {
-    const { name, clientId, client_id, category, projectManagerId, pmId, status, start, end, progress, desc, selectedTeammates } = req.body;
+    const { name, clientId, client_id, category, projectManagerId, pmId, status, start, end, progress, desc, totalCost, total_cost, selectedTeammates } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Project name is required' });
     }
 
     const projUuid = uid('p');
-    const targetCid = clientId || client_id || null;
-    const targetPmId = projectManagerId || pmId || null;
+    const rawClientVal = clientId || client_id || null;
+    let clientIntId = null;
+    if (rawClientVal) {
+      const clientRows = await query('SELECT id FROM clients WHERE uuid = ? OR id = ? OR name = ? ORDER BY id DESC', [rawClientVal, rawClientVal, rawClientVal]).catch(() => []);
+      if (clientRows && clientRows.length > 0) {
+        clientIntId = clientRows[0].id;
+      } else {
+        const fallbackClient = await query('SELECT id FROM clients ORDER BY id DESC LIMIT 1').catch(() => []);
+        if (fallbackClient && fallbackClient.length > 0) clientIntId = fallbackClient[0].id;
+      }
+    }
+    let targetPmId = req.body.pm_id || req.body.pmId || req.body.projectManagerId || req.headers['x-pm-id'] || null;
+    let targetPmName = req.body.project_manager || req.body.pm_name || req.body.pmName || null;
+
+    if (targetPmId && !targetPmName) {
+      const pmRows = await query('SELECT name FROM project_managers WHERE uuid = ? OR id = ? UNION SELECT name FROM users WHERE uuid = ? OR id = ?', [targetPmId, targetPmId, targetPmId, targetPmId]).catch(() => []);
+      if (pmRows && pmRows.length > 0) targetPmName = pmRows[0].name;
+    }
+    if (!targetPmId && targetPmName) {
+      const pmRows = await query('SELECT uuid, id FROM project_managers WHERE name = ? UNION SELECT uuid, id FROM users WHERE name = ?', [targetPmName, targetPmName]).catch(() => []);
+      if (pmRows && pmRows.length > 0) targetPmId = pmRows[0].uuid || String(pmRows[0].id);
+    }
+    if (!targetPmId) {
+      const latestPm = await query('SELECT uuid, id, name FROM project_managers ORDER BY id DESC LIMIT 1').catch(() => []);
+      if (latestPm && latestPm.length > 0) {
+        targetPmId = latestPm[0].uuid || String(latestPm[0].id);
+        targetPmName = targetPmName || latestPm[0].name;
+      }
+    }
+
+    // Guarantee a valid clientIntId to prevent foreign key constraint failures (projects_ibfk_1)
+    if (!clientIntId) {
+      let defaultClientRows = await query('SELECT id FROM clients WHERE pm_id = ? OR name = ? ORDER BY id DESC LIMIT 1', [targetPmId, 'General Client']).catch(() => []);
+      if (!defaultClientRows || defaultClientRows.length === 0) {
+        const genClientUuid = uid('c');
+        await exec(
+          `INSERT INTO clients (uuid, name, sector, contact_name, email, phone, role, pm_id, pm_name) VALUES (?, 'General Client', 'General', 'General Contact', 'client@dgec.com', '+968 9000 0000', 'Client', ?, ?)`,
+          [genClientUuid, targetPmId, targetPmName || 'Project Manager']
+        ).catch(() => {});
+        defaultClientRows = await query('SELECT id FROM clients WHERE uuid = ?', [genClientUuid]).catch(() => []);
+      }
+      if (defaultClientRows && defaultClientRows.length > 0) {
+        clientIntId = defaultClientRows[0].id;
+      }
+    }
+
     const projCategory = category || 'Full Engineering';
     const projStatus = status || 'Active';
     const projStart = start || '2026-06-08';
     const projEnd = end || '2026-12-31';
     const projProgress = Number(progress) || 0;
+    const projCost = Number(totalCost !== undefined ? totalCost : (total_cost || 0)) || 0;
     const projDesc = desc || '';
 
     // 1. Insert into MySQL projects table
     await exec(
-      `INSERT INTO projects (uuid, name, client_id, category, status, start_date, end_date, progress, description, pm_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [projUuid, name.trim(), targetCid, projCategory, projStatus, projStart, projEnd, projProgress, projDesc, targetPmId]
-    ).catch(e => console.error("Projects table insert error:", e));
+      `INSERT INTO projects (uuid, name, client_id, category, status, start_date, end_date, progress, total_cost, description, pm_id, project_manager) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [projUuid, name.trim(), clientIntId, projCategory, projStatus, projStart, projEnd, projProgress, projCost, projDesc, targetPmId, targetPmName]
+    );
+
+    console.log(`[POST /api/create-project] ✅ Inserted Project: '${name.trim()}' | pm_id: '${targetPmId}' | project_manager: '${targetPmName}' | client_id: ${clientIntId}`);
 
     // 2. Insert assigned teammates into tasks table in MySQL if provided
     const teammatesList = selectedTeammates || [];
@@ -959,19 +1275,220 @@ app.post('/api/create-project', async (req, res) => {
         id: projUuid,
         uuid: projUuid,
         name: name.trim(),
-        clientId: targetCid,
+        clientId: clientIntId || rawClientVal,
         category: projCategory,
         projectManagerId: targetPmId,
         status: projStatus,
         start: projStart,
         end: projEnd,
         progress: projProgress,
+        totalCost: projCost,
+        total_cost: projCost,
         desc: projDesc
       }
     });
   } catch (err) {
     console.error('Create project error:', err);
     res.status(500).json({ error: 'Failed to create project', details: err.message });
+  }
+});
+
+// PUT Endpoint to update Total Project Cost in MySQL
+app.put('/api/projects/:id/total-cost', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { totalCost } = req.body;
+    if (!id || totalCost === undefined) {
+      return res.status(400).json({ error: 'Project ID and totalCost are required' });
+    }
+
+    const costNum = Number(totalCost) || 0;
+    await exec(
+      `UPDATE projects SET total_cost = ?, updated_at = NOW() WHERE id = ? OR uuid = ?`,
+      [costNum, id, id]
+    );
+
+    res.json({ success: true, message: 'Total project cost updated in database', totalCost: costNum });
+  } catch (err) {
+    console.error('Update total cost error:', err);
+    res.status(500).json({ error: 'Failed to update total cost', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// INVOICE PERSISTENCE API ENDPOINTS
+// -------------------------------------------------------------
+
+// POST Create Invoice
+app.post('/api/create-invoice', async (req, res) => {
+  try {
+    const { projectId, invoiceNo, amount, dueDate, status } = req.body;
+    if (!projectId || !invoiceNo || amount === undefined) {
+      return res.status(400).json({ error: 'projectId, invoiceNo, and amount are required' });
+    }
+
+    const pRows = await query('SELECT id, pm_id FROM projects WHERE id = ? OR uuid = ?', [projectId, projectId]).catch(() => []);
+    const projIntId = (pRows && pRows.length > 0) ? pRows[0].id : projectId;
+    const targetPmId = req.body.pm_id || req.body.pmId || (pRows && pRows.length > 0 ? pRows[0].pm_id : null);
+
+    const invUuid = 'inv_' + Math.random().toString(36).substring(2, 9);
+    const invAmount = Number(amount) || 0;
+    const invStatus = status || 'Pending';
+    const invDueDate = dueDate || '2026-12-31';
+
+    await query(
+      `INSERT INTO invoices (uuid, project_id, invoice_no, amount, due_at, issued_at, status, pm_id) VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)`,
+      [invUuid, projIntId, invoiceNo.trim(), invAmount, invDueDate, invStatus, targetPmId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Invoice created successfully',
+      invoice: {
+        id: invUuid,
+        uuid: invUuid,
+        projectId: String(projectId),
+        project_id: String(projIntId),
+        invoiceNo: invoiceNo.trim(),
+        amount: invAmount,
+        dueDate: invDueDate,
+        status: invStatus
+      }
+    });
+  } catch (err) {
+    console.error('POST /api/create-invoice error:', err);
+    res.status(500).json({ error: 'Failed to create invoice', details: err.message });
+  }
+});
+
+// PUT Update Invoice Status
+app.put('/api/invoices/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!id || !status) {
+      return res.status(400).json({ error: 'Invoice ID and status are required' });
+    }
+
+    await query(
+      `UPDATE invoices SET status = ?, updated_at = NOW() WHERE uuid = ? OR id = ? OR invoice_no = ?`,
+      [status, id, id, id]
+    );
+
+    res.json({ success: true, message: 'Invoice status updated in database', id, status });
+  } catch (err) {
+    console.error('PUT /api/invoices/:id/status error:', err);
+    res.status(500).json({ error: 'Failed to update invoice status', details: err.message });
+  }
+});
+
+// DELETE Invoice
+app.delete('/api/invoices/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM invoices WHERE uuid = ? OR id = ?', [id, id]);
+    res.json({ success: true, message: 'Invoice deleted' });
+  } catch (err) {
+    console.error('DELETE /api/invoices/:id error:', err);
+    res.status(500).json({ error: 'Failed to delete invoice', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// HISTORY LOG PERSISTENCE API ENDPOINTS
+// -------------------------------------------------------------
+
+// POST Create History Log Entry
+app.post('/api/history', async (req, res) => {
+  try {
+    const { user, action } = req.body;
+    if (!action || !action.trim()) {
+      return res.status(400).json({ error: 'action text is required' });
+    }
+
+    const hUuid = 'h_' + Math.random().toString(36).substring(2, 9);
+    const userName = (user && String(user).trim()) ? String(user).trim() : 'System';
+
+    await query(
+      `INSERT INTO history (uuid, user_name, action) VALUES (?, ?, ?)`,
+      [hUuid, userName, action.trim()]
+    );
+
+    res.json({ success: true, message: 'History entry logged', id: hUuid });
+  } catch (err) {
+    console.error('POST /api/history error:', err);
+    res.status(500).json({ error: 'Failed to create history entry', details: err.message });
+  }
+});
+
+// DELETE Clear History Logs
+app.delete('/api/history', async (req, res) => {
+  try {
+    await query('DELETE FROM history');
+    res.json({ success: true, message: 'History logs cleared' });
+  } catch (err) {
+    console.error('DELETE /api/history error:', err);
+    res.status(500).json({ error: 'Failed to clear history', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// TASK MANAGEMENT & PROGRESS LOGGING API ENDPOINT
+// -------------------------------------------------------------
+
+// PUT Update Task Status & Progress Endpoint
+app.put('/api/tasks/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, percent, title, assignee, user, actor } = req.body;
+
+    const tRows = await query('SELECT * FROM tasks WHERE id = ? OR uuid = ?', [id, id]).catch(() => []);
+    const existingTask = (tRows && tRows.length > 0) ? tRows[0] : null;
+
+    const taskTitle = title || (existingTask ? existingTask.title : 'Task');
+    const taskAssignee = assignee || (existingTask ? existingTask.assignee : 'Teammate');
+    const activeActor = actor || user || req.body.userName || taskAssignee;
+
+    if (status !== undefined || percent !== undefined) {
+      const updates = [];
+      const params = [];
+
+      if (status !== undefined) {
+        updates.push('status = ?');
+        params.push(status);
+      }
+      if (percent !== undefined) {
+        updates.push('percent = ?');
+        params.push(Number(percent));
+      }
+      params.push(id, id);
+
+      await query(
+        `UPDATE tasks SET ${updates.join(', ')}, updated_at = NOW() WHERE uuid = ? OR id = ?`,
+        params
+      );
+
+      // Log to history table in MySQL!
+      let logAction = '';
+      if (percent !== undefined) {
+        logAction = `Updated progress of task '${taskTitle}' to ${percent}%`;
+      } else if (status !== undefined) {
+        logAction = `Changed status of task '${taskTitle}' to ${status}`;
+      }
+
+      if (logAction) {
+        const hUuid = 'h_' + Math.random().toString(36).substring(2, 9);
+        await query(
+          `INSERT INTO history (uuid, user_name, action) VALUES (?, ?, ?)`,
+          [hUuid, activeActor, logAction]
+        ).catch(e => console.error("Failed to insert history log:", e));
+      }
+    }
+
+    res.json({ success: true, message: 'Task updated successfully', id, status, percent });
+  } catch (err) {
+    console.error('PUT /api/tasks/:id error:', err);
+    res.status(500).json({ error: 'Failed to update task', details: err.message });
   }
 });
 app.post('/api/create-task', async (req, res) => {
@@ -1093,37 +1610,144 @@ app.post('/api/projects/:id/documents', async (req, res) => {
   }
 });
 
-// Ensure database schema and default records are initialized
-async function ensureDatabaseSchema() {
+// -------------------------------------------------------------
+// REQUIRED DOCUMENTS MANAGEMENT & UPLOAD SYSTEM API ENDPOINTS
+// -------------------------------------------------------------
+
+// GET required documents for project
+app.get('/api/projects/:id/documents-list', async (req, res) => {
   try {
-    // Check if the users table exists
-    await query('SELECT 1 FROM users LIMIT 1');
-    console.log('✅ Database schema already exists');
+    const { id } = req.params;
+    const pRows = await query('SELECT id FROM projects WHERE id = ? OR uuid = ?', [id, id]).catch(() => []);
+    const projIntId = (pRows && pRows.length > 0) ? pRows[0].id : id;
+
+    const rows = await query(
+      'SELECT * FROM project_documents WHERE project_id = ? OR project_id = ? ORDER BY id DESC',
+      [projIntId, id]
+    ).catch(() => []);
+
+    res.json({ success: true, documents: rows });
   } catch (err) {
-    console.log('⚠️ Database schema not found. Initializing database...');
-    const schemaPath = path.resolve('dgec_db.sql');
-    if (fs.existsSync(schemaPath)) {
-      const sqlContent = fs.readFileSync(schemaPath, 'utf8');
-      const statements = sqlContent
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
-      for (const stmt of statements) {
-        try {
-          await exec(stmt);
-        } catch (execErr) {
-          // Ignore comments or empty statements that mysql2 might complain about
-          if (!stmt.startsWith('--') && !stmt.startsWith('/*')) {
-            console.error('Error executing statement:', stmt.substring(0, 50), execErr.message);
-          }
-        }
-      }
-      console.log('✅ Schema imported successfully.');
-    } else {
-      console.error('❌ Schema file dgec_db.sql not found!');
-    }
+    console.error('GET /api/projects/:id/documents-list error:', err);
+    res.status(500).json({ error: 'Failed to fetch project documents', details: err.message });
   }
-}
+});
+
+// POST Required Documents for Project
+app.post('/api/projects/:id/required-documents', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { documentName, documentNames } = req.body;
+    
+    if (!id) {
+      return res.status(400).json({ error: 'Project ID is required' });
+    }
+
+    const pRows = await query('SELECT id FROM projects WHERE id = ? OR uuid = ?', [id, id]).catch(() => []);
+    const projIntId = (pRows && pRows.length > 0) ? pRows[0].id : id;
+
+    const names = Array.isArray(documentNames) ? documentNames : (documentName ? [documentName] : []);
+    if (names.length === 0) {
+      return res.status(400).json({ error: 'At least one documentName is required' });
+    }
+
+    const createdDocs = [];
+    for (const name of names) {
+      if (!name || !name.trim()) continue;
+      const docUuid = 'doc_' + Math.random().toString(36).substring(2, 9);
+      await query(
+        `INSERT INTO project_documents (uuid, project_id, document_name, status)
+         VALUES (?, ?, ?, 'Pending')`,
+        [docUuid, projIntId, name.trim()]
+      );
+      createdDocs.push({
+        id: docUuid,
+        uuid: docUuid,
+        projectId: String(id),
+        project_id: String(projIntId),
+        documentName: name.trim(),
+        status: 'Pending',
+        fileName: null,
+        filePath: null
+      });
+    }
+
+    res.json({ success: true, message: 'Required documents saved', documents: createdDocs });
+  } catch (err) {
+    console.error('POST /api/projects/:id/required-documents error:', err);
+    res.status(500).json({ error: 'Failed to save required documents', details: err.message });
+  }
+});
+
+// POST Upload Document File & Set Status
+app.post('/api/projects/:id/upload-document', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { docId, documentName, fileName, fileData, status } = req.body;
+
+    const pRows = await query('SELECT id FROM projects WHERE id = ? OR uuid = ?', [id, id]).catch(() => []);
+    const projIntId = (pRows && pRows.length > 0) ? pRows[0].id : id;
+
+    const newStatus = status || 'Pending';
+    const filePath = fileData || `uploads/${fileName || 'document.pdf'}`;
+    let targetDocId = docId;
+
+    if (targetDocId) {
+      await query(
+        `UPDATE project_documents SET file_name = ?, file_path = ?, status = ?, uploaded_at = NOW() WHERE uuid = ? OR id = ?`,
+        [fileName || 'document.pdf', filePath, newStatus, targetDocId, targetDocId]
+      );
+    } else {
+      targetDocId = 'doc_' + Math.random().toString(36).substring(2, 9);
+      await query(
+        `INSERT INTO project_documents (uuid, project_id, document_name, file_name, file_path, status, uploaded_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [targetDocId, projIntId, documentName || 'Project Document', fileName || 'document.pdf', filePath, newStatus]
+      );
+    }
+
+    const updatedRows = await query('SELECT * FROM project_documents WHERE uuid = ? OR id = ?', [targetDocId, targetDocId]).catch(() => []);
+
+    res.json({ success: true, message: 'Document uploaded successfully', document: updatedRows[0] || null });
+  } catch (err) {
+    console.error('POST /api/projects/:id/upload-document error:', err);
+    res.status(500).json({ error: 'Failed to upload document', details: err.message });
+  }
+});
+
+// PUT Update Document Status
+app.put('/api/documents/:docId/status', async (req, res) => {
+  try {
+    const { docId } = req.params;
+    const { status } = req.body;
+
+    if (!docId || !status) {
+      return res.status(400).json({ error: 'docId and status are required' });
+    }
+
+    await query(
+      `UPDATE project_documents SET status = ?, updated_at = NOW() WHERE uuid = ? OR id = ?`,
+      [status, docId, docId]
+    );
+
+    res.json({ success: true, message: 'Document status updated', docId, status });
+  } catch (err) {
+    console.error('PUT /api/documents/:docId/status error:', err);
+    res.status(500).json({ error: 'Failed to update document status', details: err.message });
+  }
+});
+
+// DELETE Document
+app.delete('/api/documents/:docId', async (req, res) => {
+  try {
+    const { docId } = req.params;
+    await query('DELETE FROM project_documents WHERE uuid = ? OR id = ?', [docId, docId]);
+    res.json({ success: true, message: 'Document deleted' });
+  } catch (err) {
+    console.error('DELETE /api/documents/:docId error:', err);
+    res.status(500).json({ error: 'Failed to delete document', details: err.message });
+  }
+});
 
 // Ensure a default admin user exists
 async function ensureAdmin() {
@@ -1159,13 +1783,8 @@ async function ensureJohnDoe() {
 
 // Start the server
 const PORT = process.env.PORT || 3000;
-ensureDatabaseSchema()
-  .then(() => Promise.all([ensureAdmin(), ensureJohnDoe()]))
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`🚀 Server listening on http://localhost:${PORT}`);
-    });
-  })
-  .catch(err => {
-    console.error('❌ Server startup error:', err);
+Promise.all([ensureAdmin(), ensureJohnDoe()]).then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server listening on http://localhost:${PORT}`);
   });
+});
