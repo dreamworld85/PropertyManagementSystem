@@ -4,10 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DGEC Project Control Dashboard</title>
-  <script type="module" crossorigin src="/assets/main-CmARza3k.js"></script>
+  <script>
+    (function() {
+      const originalFetch = window.fetch;
+      window.fetch = function(input, init) {
+        if (typeof input === 'string' && input.startsWith('/api')) {
+          const apiBase = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? '' 
+            : 'https://api2.greensparrows.com';
+          input = apiBase + input;
+        }
+        return originalFetch(input, init);
+      };
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/main-DJcaXqpC.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/client-CkCYsZd5.js">
-  <link rel="modulepreload" crossorigin href="/assets/index-lEvycm8W.js">
-  <link rel="modulepreload" crossorigin href="/assets/Modals-CyI1hIGU.js">
+  <link rel="modulepreload" crossorigin href="/assets/index-C2Vhz52G.js">
+  <link rel="modulepreload" crossorigin href="/assets/StaffManagement-BK9scb1p.js">
   <link rel="stylesheet" crossorigin href="/assets/index-C9mnKCRI.css">
 </head>
 <body>
