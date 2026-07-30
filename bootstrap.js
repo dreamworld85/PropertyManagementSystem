@@ -7,7 +7,7 @@ dotenv.config();
 // set the default production database details directly in memory.
 if (!process.env.DB_USER) {
   console.log('⚠️ DB_USER not found in environment, applying in-memory production fallbacks...');
-  process.env.DB_HOST = '127.0.0.1';
+  process.env.DB_HOST = 'localhost';
   process.env.DB_PORT = '3306';
   process.env.DB_USER = 'u859202671_pmf_circle_us';
   process.env.DB_PASSWORD = 'Welcome_2026@';
