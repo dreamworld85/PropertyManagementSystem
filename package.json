@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 8080 --host",
-    "build": "vite build",
+    "build": "node test-db-connection.js && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
