@@ -3,10 +3,38 @@ import cors from 'cors';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
 import bcrypt from 'bcryptjs';
 import { uid } from './src/utils/helpers.js';
 import { SEED } from './src/data/seed.js';
 import { query, exec } from './src/utils/mysql.js';
+
+// Auto-generate .env on production server if it does not exist
+const envPath = path.resolve('.env');
+if (!fs.existsSync(envPath)) {
+  console.log('⚠️ .env file not found, creating default production .env...');
+  const envContent = `# SMTP Mail Configuration
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_email@gmail.com
+SMTP_PASS=your_gmail_app_password
+
+# Portals configurations
+API_PORT=3000
+PORTAL_URL=https://webapp.greensparrows.com
+DISABLE_EMAIL=true
+
+# Database configuration
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=u859202671_pmf_circle_us
+DB_PASSWORD=Welcome_2026@
+DB_NAME=u859202671_pmf_circle_its
+`;
+  fs.writeFileSync(envPath, envContent.trim() + '\n');
+  console.log('✅ Default .env file created.');
+}
 
 dotenv.config();
 
@@ -1094,6 +1122,38 @@ app.post('/api/projects/:id/documents', async (req, res) => {
   }
 });
 
+// Ensure database schema and default records are initialized
+async function ensureDatabaseSchema() {
+  try {
+    // Check if the users table exists
+    await query('SELECT 1 FROM users LIMIT 1');
+    console.log('✅ Database schema already exists');
+  } catch (err) {
+    console.log('⚠️ Database schema not found. Initializing database...');
+    const schemaPath = path.resolve('dgec_db.sql');
+    if (fs.existsSync(schemaPath)) {
+      const sqlContent = fs.readFileSync(schemaPath, 'utf8');
+      const statements = sqlContent
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      for (const stmt of statements) {
+        try {
+          await exec(stmt);
+        } catch (execErr) {
+          // Ignore comments or empty statements that mysql2 might complain about
+          if (!stmt.startsWith('--') && !stmt.startsWith('/*')) {
+            console.error('Error executing statement:', stmt.substring(0, 50), execErr.message);
+          }
+        }
+      }
+      console.log('✅ Schema imported successfully.');
+    } else {
+      console.error('❌ Schema file dgec_db.sql not found!');
+    }
+  }
+}
+
 // Ensure a default admin user exists
 async function ensureAdmin() {
   const rows = await query('SELECT * FROM users WHERE username = ?', ['admin']);
@@ -1128,8 +1188,13 @@ async function ensureJohnDoe() {
 
 // Start the server
 const PORT = process.env.PORT || 3000;
-Promise.all([ensureAdmin(), ensureJohnDoe()]).then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server listening on http://localhost:${PORT}`);
+ensureDatabaseSchema()
+  .then(() => Promise.all([ensureAdmin(), ensureJohnDoe()]))
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Server listening on http://localhost:${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ Server startup error:', err);
   });
-});
