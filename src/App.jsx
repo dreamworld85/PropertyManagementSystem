@@ -30,31 +30,20 @@ export default function App() {
         if (parsed && (parsed.username || parsed.name)) return parsed;
       }
     } catch (e) {}
-
-    // Robust default fallback user (Project Manager) to guarantee dashboard never renders blank
-    const defaultUser = {
-      id: "u_vrat7l8",
-      uuid: "u_vrat7l8",
-      name: "Saurabh M.",
-      username: "projectmanager",
-      role: "project_manager",
-      userType: "staff",
-      discipline: "MEP",
-      email: "pm@dgec.com",
-      phone: "+968 9412 8899"
-    };
-    try {
-      localStorage.setItem('dgec_user', JSON.stringify(defaultUser));
-    } catch(e) {}
-    return defaultUser;
+    return null;
   });
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      window.location.href = '/login';
+      return;
+    }
     const role = String(user.role || '').toLowerCase();
     const userType = String(user.userType || user.user_type || '').toLowerCase();
 
-    if (role === 'client' || role.includes('client') || userType === 'client') {
+    if (role === 'admin' || userType === 'admin') {
+      window.location.href = '/admin';
+    } else if (role === 'client' || role.includes('client') || userType === 'client') {
       window.location.href = '/client';
     } else if (
       (role === 'staff' || userType === 'staff') &&
@@ -75,7 +64,7 @@ export default function App() {
   const [sel, setSel] = useState(null);
   const [asClient, setAsClient] = useState("c1");
   const [modal, setModal] = useState(null);
-  const [currentUser, setCurrentUser] = useState(user.name);
+  const [currentUser, setCurrentUser] = useState(user?.name || '');
   const [menuOpen, setMenuOpen] = useState(false);
   const loaded = useRef(false);
 
@@ -801,6 +790,14 @@ export default function App() {
   }, [db, isAdmin, isPM, loggedInUser]);
 
   const displayDb = activeDb || db;
+
+  if (!user) {
+    return (
+      <div className="wrap">
+        <div className="splash">Redirecting to login...</div>
+      </div>
+    );
+  }
 
   if (!displayDb) {
     return (

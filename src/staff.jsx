@@ -30,13 +30,24 @@ function StaffPortal() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    if (sessionUser) {
-      const role = (sessionUser.role || '').toLowerCase();
-      const userType = (sessionUser.userType || sessionUser.user_type || '').toLowerCase();
-      if (role === 'client' || role.includes('client') || userType === 'client') {
-        window.location.href = '/client';
-        return;
-      }
+    if (!sessionUser) {
+      localStorage.removeItem('dgec_user');
+      window.location.href = '/login';
+      return;
+    }
+    const role = (sessionUser.role || '').toLowerCase();
+    const userType = (sessionUser.userType || sessionUser.user_type || '').toLowerCase();
+    if (role === 'client' || role.includes('client') || userType === 'client') {
+      window.location.href = '/client';
+      return;
+    }
+    if (role === 'admin' || userType === 'admin') {
+      window.location.href = '/admin';
+      return;
+    }
+    if (role.includes('manager') || userType.includes('manager') || sessionUser.username === 'projectmanager' || sessionUser.name === 'Saurabh M.') {
+      window.location.href = '/';
+      return;
     }
   }, [sessionUser]);
 
@@ -124,6 +135,14 @@ function StaffPortal() {
       setProfilePassword(user.password || "Welcome_2026@");
     }
   }, [user?.id]);
+
+  if (!sessionUser) {
+    return (
+      <div className="wrap">
+        <div className="splash">Redirecting to login...</div>
+      </div>
+    );
+  }
 
   if (!db) {
     return (
