@@ -34,17 +34,21 @@ export default function App() {
   });
 
   useEffect(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes('/login') || path.includes('/login.html')) {
+      return;
+    }
     if (!user) {
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = String(user.role || '').toLowerCase();
     const userType = String(user.userType || user.user_type || '').toLowerCase();
 
     if (role === 'admin' || userType === 'admin') {
-      window.location.href = '/admin';
+      window.location.href = '/admin.html';
     } else if (role === 'client' || role.includes('client') || userType === 'client') {
-      window.location.href = '/client';
+      window.location.href = '/client.html';
     } else if (
       (role === 'staff' || userType === 'staff') &&
       !role.includes('manager') &&
@@ -54,7 +58,7 @@ export default function App() {
       user.username !== 'projectmanager' &&
       user.name !== 'Saurabh M.'
     ) {
-      window.location.href = '/staff';
+      window.location.href = '/staff.html';
     }
   }, [user]);
 

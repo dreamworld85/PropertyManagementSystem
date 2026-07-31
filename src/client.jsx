@@ -22,17 +22,17 @@ function ClientPortal() {
   useEffect(() => {
     if (!sessionUser || !sessionUser.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = (sessionUser.role || '').toLowerCase();
     const userType = (sessionUser.userType || '').toLowerCase();
 
-    if (role !== 'client' && !role.includes('client') && userType !== 'client' && role !== 'admin' && userType !== 'admin') {
+    if (role !== 'client' && !role.includes('client' ) && userType !== 'client' && role !== 'admin' && userType !== 'admin') {
       if (role.includes('manager') || userType.includes('manager') || sessionUser.username === 'projectmanager' || sessionUser.name === 'Saurabh M.') {
-        window.location.href = '/';
+        window.location.href = '/index.html';
       } else if (role === 'staff' || userType === 'staff') {
-        window.location.href = '/staff';
+        window.location.href = '/staff.html';
       }
     }
   }, [sessionUser]);

@@ -32,21 +32,21 @@ function StaffPortal() {
   useEffect(() => {
     if (!sessionUser) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = (sessionUser.role || '').toLowerCase();
     const userType = (sessionUser.userType || sessionUser.user_type || '').toLowerCase();
     if (role === 'client' || role.includes('client') || userType === 'client') {
-      window.location.href = '/client';
+      window.location.href = '/client.html';
       return;
     }
     if (role === 'admin' || userType === 'admin') {
-      window.location.href = '/admin';
+      window.location.href = '/admin.html';
       return;
     }
     if (role.includes('manager') || userType.includes('manager') || sessionUser.username === 'projectmanager' || sessionUser.name === 'Saurabh M.') {
-      window.location.href = '/';
+      window.location.href = '/index.html';
       return;
     }
   }, [sessionUser]);

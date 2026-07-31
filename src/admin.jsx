@@ -25,7 +25,7 @@ function AdminApp() {
   useEffect(() => {
     if (!user || !user.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login';
+      window.location.href = '/login.html';
       return;
     }
     const role = (user.role || '').toLowerCase();
@@ -40,9 +40,9 @@ function AdminApp() {
 
     if (!isPMOrAdmin) {
       if (role.includes('client') || userType.includes('client')) {
-        window.location.href = '/client';
+        window.location.href = '/client.html';
       } else {
-        window.location.href = '/staff';
+        window.location.href = '/staff.html';
       }
     }
   }, [user]);
