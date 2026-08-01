@@ -9,6 +9,9 @@ import Avatar from './components/Avatar';
 import Admin from './pages/Admin';
 import StaffManagement from './pages/StaffManagement';
 import ProjectManagersAdmin from './pages/ProjectManagersAdmin';
+import AdminStaffPortal from './pages/AdminStaffPortal';
+import ProjectManagersFullData from './pages/ProjectManagersFullData';
+import Settings from './pages/Settings';
 import ErrorBoundary from './components/ErrorBoundary';
 import './index.css';
 
@@ -25,7 +28,7 @@ function AdminApp() {
   useEffect(() => {
     if (!user || !user.username) {
       localStorage.removeItem('dgec_user');
-      window.location.href = '/login.html';
+      window.location.href = '/login';
       return;
     }
     const role = (user.role || '').toLowerCase();
@@ -40,9 +43,9 @@ function AdminApp() {
 
     if (!isPMOrAdmin) {
       if (role.includes('client') || userType.includes('client')) {
-        window.location.href = '/client.html';
+        window.location.href = '/client';
       } else {
-        window.location.href = '/staff.html';
+        window.location.href = '/staff';
       }
     }
   }, [user]);
@@ -118,6 +121,24 @@ function AdminApp() {
     const d = await loadDB();
     if (d) setDb(d);
   };
+
+  const setList = (key, arr) =>
+    commit(
+      (d) => ({
+        ...d,
+        settings: {
+          ...(d.settings || SEED.settings),
+          [key]: arr
+        }
+      }),
+      `Updated settings category "${key}"`
+    );
+
+  const resetDB = () =>
+    commit(
+      () => JSON.parse(JSON.stringify(SEED)),
+      "Reset database to seed"
+    );
 
   if (!db) {
     return (
@@ -374,7 +395,8 @@ function AdminApp() {
                   ["users", "Teammates Admin", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="3" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><line x1="12" y1="8" x2="12" y2="12" /><path d="M6 15v-1a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" /></svg>],
                   ["clients", "Clients Admin", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="2.2" /><path d="M8.5 20v-2.5a3.5 3.5 0 0 1 7 0V20" /><circle cx="5" cy="7" r="1.8" /><path d="M1.5 20v-2a3 3 0 0 1 5 0v2" /><circle cx="19" cy="7" r="1.8" /><path d="M17.5 20v-2a3 3 0 0 1 5 0v2" /></svg>],
                   ["pms", "Project Managers", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 4l3 12h14l3-12-6 7-4-5-4 5z" /><path d="M5 16h14v3H5z" /></svg>],
-                  ["staff_mgmt", "Staff Management", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2.5M8 3l1 2M16 3l-1 2M4.5 7.5A8 8 0 0 1 19.5 7.5" /><circle cx="12" cy="11" r="2.2" /><path d="M8 21.5v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3" /><circle cx="5.5" cy="13" r="1.8" /><path d="M1 21.5v-2a3 3 0 0 1 3-3h2.5" /><circle cx="18.5" cy="13" r="1.8" /><path d="M17.5 16.5H20a3 3 0 0 1 3 3v2" /></svg>]
+                  ["staff_mgmt", "Staff Management", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2.5M8 3l1 2M16 3l-1 2M4.5 7.5A8 8 0 0 1 19.5 7.5" /><circle cx="12" cy="11" r="2.2" /><path d="M8 21.5v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3" /><circle cx="5.5" cy="13" r="1.8" /><path d="M1 21.5v-2a3 3 0 0 1 3-3h2.5" /><circle cx="18.5" cy="13" r="1.8" /><path d="M17.5 16.5H20a3 3 0 0 1 3 3v2" /></svg>],
+                  ["settings", "Settings", <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>]
                 ].map(([k, l, ic]) => (
                   <button key={k} className={subTab === k ? "on" : ""} onClick={() => { setSubTab(k); setMenuOpen(false); }}>
                     <span className="nav-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#ffffff" }}>{ic}</span>
@@ -414,6 +436,23 @@ function AdminApp() {
         <main className="main">
           <div className="topbar">
             <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              {(subTab !== "projects" || selProjectId) && (
+                <button
+                  className="btn sec sm"
+                  onClick={() => {
+                    if (selProjectId) {
+                      setSelProjectId(null);
+                    } else if (subTab !== "projects") {
+                      setSubTab("projects");
+                    } else if (window.history.length > 1) {
+                      window.history.back();
+                    }
+                  }}
+                  style={{ padding: "6px 12px", borderRadius: 8, fontWeight: 700, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", background: "#fff", border: "1px solid var(--line)" }}
+                >
+                  ← Back
+                </button>
+              )}
               <div>
                 <h1 className="disp" style={{ margin: 0 }}>
                   {subTab === "projects"
@@ -423,8 +462,12 @@ function AdminApp() {
                     : subTab === "clients"
                     ? "Clients Administration"
                     : subTab === "pms"
-                    ? "Project Managers Administration"
-                    : "Staff Management"}
+                    ? "Project Managers Full Data & Portfolio"
+                    : subTab === "company_staff"
+                    ? "Company Staff Portal & Performance Matrix"
+                    : subTab === "staff_mgmt"
+                    ? "Staff Management"
+                    : "System Settings & Configuration"}
                 </h1>
                 <p style={{ margin: "2px 0 0 0" }}>System configuration, project setup, staff records, and user assignment portal.</p>
               </div>
@@ -434,10 +477,14 @@ function AdminApp() {
             </button>
           </div>
           <div className="content">
-            {subTab === "pms" ? (
-              <ProjectManagersAdmin db={db} refresh={refresh} />
+            {subTab === "company_staff" ? (
+              <AdminStaffPortal db={db} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
+            ) : subTab === "pms" ? (
+              <ProjectManagersFullData db={db} commit={commit} updateUser={updateUser} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
             ) : subTab === "staff_mgmt" ? (
-              <StaffManagement isAdmin={true} />
+              <StaffManagement isAdmin={true} db={db} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
+            ) : subTab === "settings" ? (
+              <Settings db={db} setList={setList} resetDB={resetDB} onNavigate={(key) => setSubTab(key)} loggedInUser={user} isAdmin={true} />
             ) : (
               <Admin
                 db={db}

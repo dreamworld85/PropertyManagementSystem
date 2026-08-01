@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Avatar from '../components/Avatar';
 
-export default function ProjectManagersAdmin({ db = {}, refresh }) {
+export default function ProjectManagersAdmin({ db = {}, refresh, onSelectProject }) {
   const users = db.users || [];
   const projects = db.projects || [];
 
@@ -147,31 +147,31 @@ export default function ProjectManagersAdmin({ db = {}, refresh }) {
       {/* Grid of PM Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
         {pmList.map(pm => {
-          const pmProjectsCount = projects.filter(p => 
+          const pmProjectsList = projects.filter(p => 
             String(p.pm_id).toLowerCase() === String(pm.id).toLowerCase() || 
             String(p.projectManagerId).toLowerCase() === String(pm.id).toLowerCase() ||
             (p.project_manager && String(p.project_manager).toLowerCase() === String(pm.name).toLowerCase())
-          ).length;
+          );
 
           return (
-            <div key={pm.id || pm.username} className="card" style={{ padding: 20, background: '#fff', borderRadius: 16, border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 220 }}>
+            <div key={pm.id || pm.username} className="card" style={{ padding: 18, background: '#fff', borderRadius: 16, border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 260 }}>
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
-                  <Avatar name={pm.name} size={48} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                  <Avatar name={pm.name} size={44} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 10, color: 'var(--accent2)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.4px' }}>
                       Project Manager
                     </div>
-                    <div style={{ fontWeight: 800, color: 'var(--ink)', fontSize: 16, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--ink)', fontSize: 15, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {pm.name}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 1 }}>
                       @{pm.username || pm.name.toLowerCase().replace(/\s+/g, '')}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ padding: '10px 12px', background: 'var(--surface)', borderRadius: 10, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ padding: '8px 10px', background: 'var(--surface)', borderRadius: 10, fontSize: 11.5, display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span className="muted">Discipline:</span>
                     <span style={{ fontWeight: 700, color: 'var(--ink)' }}>{pm.discipline || 'MEP'}</span>
@@ -185,24 +185,82 @@ export default function ProjectManagersAdmin({ db = {}, refresh }) {
                     <span style={{ fontWeight: 600, color: 'var(--ink)' }}>{pm.phone || '—'}</span>
                   </div>
                 </div>
+
+                {/* COMMITTED PROJECTS LIST FOR THIS PM */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--ink)", textTransform: "uppercase", letterSpacing: ".4px", display: "flex", alignItems: "center", gap: 4 }}>
+                    <span>📁</span> Committed Projects ({pmProjectsList.length})
+                  </div>
+                  {pmProjectsList.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 120, overflowY: "auto", paddingRight: 2 }}>
+                      {pmProjectsList.map(proj => (
+                        <div
+                          key={proj.id}
+                          onClick={() => {
+                            if (onSelectProject) {
+                              onSelectProject(proj.id);
+                            }
+                          }}
+                          title="Click to view project administration details"
+                          style={{
+                            padding: "4px 8px",
+                            background: "#f8fafc",
+                            borderRadius: 6,
+                            border: "1px solid #e2e8f0",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease"
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "#f0f7ff";
+                            e.currentTarget.style.borderColor = "#93c5fd";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "#f8fafc";
+                            e.currentTarget.style.borderColor = "#e2e8f0";
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: 11.5, color: "#1e40af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              🔗 {proj.name}
+                            </div>
+                            <div style={{ fontSize: 9.5, color: "#64748b" }}>{proj.category || "Engineering"}</div>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: "#2563eb" }}>{proj.progress || 0}%</span>
+                            <span className="pill" style={{ fontSize: 9, padding: "1px 5px", background: "#dcfce7", color: "#15803d", fontWeight: 700 }}>
+                              {proj.status || "Active"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, border: "1px dashed #cbd5e1", fontSize: 10.5, color: "#94a3b8", fontStyle: "italic", textAlign: "center" }}>
+                      No projects currently assigned to this PM.
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
-                <span className="pill" style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontSize: 11, fontWeight: 700 }}>
-                  {pmProjectsCount} Active Project{pmProjectsCount !== 1 ? 's' : ''}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                <span className="pill" style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontSize: 10.5, fontWeight: 700 }}>
+                  {pmProjectsList.length} Committed Project{pmProjectsList.length !== 1 ? 's' : ''}
                 </span>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 6 }}>
                   <button
                     onClick={() => handleOpenEdit(pm)}
                     className="btn sec sm"
-                    style={{ padding: '4px 10px', fontSize: 11.5 }}
+                    style={{ padding: '3px 8px', fontSize: 11 }}
                   >
                     ✏️ Edit
                   </button>
                   <button
                     onClick={() => handleDelete(pm)}
                     className="btn sec sm"
-                    style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--red)', borderColor: 'var(--red)' }}
+                    style={{ padding: '3px 8px', fontSize: 11, color: 'var(--red)', borderColor: 'var(--red)' }}
                   >
                     🗑️ Delete
                   </button>

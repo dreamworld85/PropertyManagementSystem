@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Avatar from '../components/Avatar';
 import Tag from '../components/Tag';
 
-export default function StaffManagement({ isAdmin }) {
+export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -10,6 +10,7 @@ export default function StaffManagement({ isAdmin }) {
   const [roleFilter, setRoleFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
+  const [selectedStaffDetail, setSelectedStaffDetail] = useState(null);
 
   const currentUser = (() => {
     try {
@@ -182,8 +183,230 @@ export default function StaffManagement({ isAdmin }) {
     return matchesSearch && matchesRole;
   });
 
+  if (selectedStaffDetail) {
+    const staffIdStr = String(selectedStaffDetail.id || selectedStaffDetail.uuid || '').toLowerCase();
+    const staffNameStr = String(selectedStaffDetail.name || '').toLowerCase();
+
+    const allProjects = db.projects || [];
+    const allTasks = db.tasks || [];
+    const allUsers = db.users || [];
+
+    // Filter tasks assigned to this staff member
+    const memberTasks = allTasks.filter(t => {
+      const assigneeStr = String(t.assignee || t.user_id || '').toLowerCase();
+      return (staffIdStr && assigneeStr === staffIdStr) || (staffNameStr && assigneeStr === staffNameStr);
+    });
+
+    // Find committed projects for this staff member
+    const assignedProjectIds = new Set(memberTasks.map(t => String(t.projectId || t.project_id)));
+    const committedProjects = allProjects.filter(p => assignedProjectIds.has(String(p.id || p.uuid)));
+
+    // Total metrics
+    const totalTasksCount = memberTasks.length;
+    const completedTasksCount = memberTasks.filter(t => t.status === 'Done' || t.percent === 100).length;
+    const overallCompletionRate = totalTasksCount > 0 ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0;
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Back Button */}
+        <button
+          className="btn sec sm"
+          onClick={() => setSelectedStaffDetail(null)}
+          style={{ width: 'fit-content', borderRadius: 8, padding: '6px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+        >
+          ← Back to Staff Management Directory
+        </button>
+
+        {/* Staff Profile Hero Card */}
+        <div
+          className="card"
+          style={{
+            padding: '20px 24px',
+            background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+            color: '#fff',
+            borderRadius: 16,
+            boxShadow: '0 8px 20px -4px rgba(0, 0, 0, 0.25)',
+            border: '1px solid rgba(255,255,255,0.1)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <Avatar name={selectedStaffDetail.name} size={56} />
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <h2 className="disp" style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#fff' }}>
+                    {selectedStaffDetail.name}
+                  </h2>
+                  <span className="pill" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 800, fontSize: 11.5 }}>
+                    💼 {selectedStaffDetail.role || 'Staff Member'}
+                  </span>
+                  {selectedStaffDetail.discipline && (
+                    <span className="pill" style={{ background: '#f3e8ff', color: '#7e22ce', fontWeight: 800, fontSize: 11.5 }}>
+                      {selectedStaffDetail.discipline}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12.5, color: '#94a3b8', marginTop: 4 }}>
+                  ✉️ {selectedStaffDetail.email || 'N/A'} · 📞 {selectedStaffDetail.contact_number || selectedStaffDetail.phone || 'N/A'}
+                  {selectedStaffDetail.created_at && ` · 🗓️ Joined: ${new Date(selectedStaffDetail.created_at).toLocaleDateString()}`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Metrics Bar */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginTop: 18, paddingTop: 14, borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+            <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>Committed Projects</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#38bdf8', marginTop: 2 }}>{committedProjects.length} Projects</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>Assigned Tasks</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#818cf8', marginTop: 2 }}>{totalTasksCount} Tasks</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>Task Completion</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#34d399', marginTop: 2 }}>{completedTasksCount} / {totalTasksCount} ({overallCompletionRate}%)</div>
+            </div>
+          </div>
+        </div>
+
+        {/* COMMITTED PROJECTS & TASKS SECTION */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>📁</span> Committed Projects & Task Progress Breakdown ({committedProjects.length})
+          </div>
+
+          {committedProjects.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+              {committedProjects.map(proj => {
+                // Find PM for this project
+                const pmUser = allUsers.find(u => 
+                  String(u.id) === String(proj.pm_id || proj.projectManagerId) || 
+                  String(u.name).toLowerCase() === String(proj.project_manager || proj.pm_name).toLowerCase()
+                );
+                const pmName = pmUser ? pmUser.name : (proj.project_manager || proj.pm_name || 'Assigned PM');
+
+                // Tasks for this staff member in this project
+                const projMemberTasks = memberTasks.filter(t => 
+                  String(t.projectId || t.project_id) === String(proj.id || proj.uuid)
+                );
+
+                const projCompletedCount = projMemberTasks.filter(t => t.status === 'Done' || t.percent === 100).length;
+
+                return (
+                  <div
+                    key={proj.id || proj.uuid}
+                    className="card"
+                    style={{
+                      padding: 18,
+                      background: '#fff',
+                      borderRadius: 14,
+                      border: '1px solid var(--line)',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12
+                    }}
+                  >
+                    {/* Project Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                      <div>
+                        <div
+                          onClick={() => onOpenProject && onOpenProject(proj.id)}
+                          style={{ fontWeight: 800, fontSize: 15, color: '#1e40af', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          title="Click to view project details"
+                        >
+                          🔗 {proj.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                          Category: <strong>{proj.category || 'Engineering'}</strong>
+                        </div>
+                      </div>
+                      <span className="pill" style={{ fontSize: 10, padding: '2px 8px', background: '#dcfce7', color: '#15803d', fontWeight: 700 }}>
+                        {proj.status || 'Active'}
+                      </span>
+                    </div>
+
+                    {/* ASSIGNED PROJECT MANAGER */}
+                    <div style={{ padding: '8px 10px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14 }}>👑</span>
+                      <div style={{ fontSize: 11.5, color: '#475569' }}>
+                        Project Manager: <strong style={{ color: '#1e293b', fontWeight: 800 }}>{pmName}</strong>
+                      </div>
+                    </div>
+
+                    {/* TASKS LIST IN THIS PROJECT */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                        Assigned Tasks ({projMemberTasks.length}):
+                      </div>
+
+                      {projMemberTasks.map(task => {
+                        const taskPercent = task.percent !== undefined ? task.percent : (task.status === 'Done' ? 100 : 0);
+                        return (
+                          <div key={task.id || task.uuid} style={{ padding: '8px 10px', background: '#ffffff', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--ink)' }}>
+                                📍 {task.title || 'Task Assignment'}
+                              </div>
+                              <span className="pill" style={{ fontSize: 9.5, padding: '1px 6px', background: task.status === 'Done' ? '#dcfce7' : '#e0f2fe', color: task.status === 'Done' ? '#15803d' : '#0369a1', fontWeight: 700 }}>
+                                {task.status || 'In Progress'} ({taskPercent}%)
+                              </span>
+                            </div>
+
+                            {/* Task Progress Bar */}
+                            <div style={{ background: '#e2e8f0', height: 5, borderRadius: 3, overflow: 'hidden', marginTop: 2 }}>
+                              <div
+                                style={{
+                                  width: `${taskPercent}%`,
+                                  height: '100%',
+                                  background: taskPercent === 100 ? '#10b981' : taskPercent >= 40 ? '#2563eb' : '#f59e0b',
+                                  borderRadius: 3,
+                                  transition: 'width 0.3s ease'
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {projMemberTasks.length === 0 && (
+                        <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', padding: '4px 0' }}>
+                          No specific task items logged for this project.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="card empty" style={{ padding: 36, textAlign: 'center', background: '#fff', borderRadius: 14 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📁</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>No Committed Projects Found</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                This staff member does not have active project task assignments currently logged.
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Back Button */}
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <button
+          className="btn sec sm"
+          onClick={() => window.history.length > 1 ? window.history.back() : null}
+          style={{ padding: '6px 14px', borderRadius: 8, fontWeight: 700, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', background: '#fff', border: '1px solid var(--line)' }}
+        >
+          ← Back
+        </button>
+      </div>
       {/* Header Banner */}
       <div className="card" style={{ padding: 24, background: '#fff', borderRadius: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
@@ -327,21 +550,32 @@ export default function StaffManagement({ isAdmin }) {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-                <button
-                  className="btn sec sm"
-                  onClick={() => openEditModal(staff)}
-                  style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}
-                >
-                  ✏️ Edit
-                </button>
-                <button
-                  className="btn sec sm"
-                  onClick={() => handleDelete(staff)}
-                  style={{ padding: '6px 12px', fontSize: 12, color: '#ef4444', borderColor: '#fca5a5', cursor: 'pointer' }}
-                >
-                  🗑️ Delete
-                </button>
+              <div style={{ display: 'flex', justifyContent: isSystemAdmin ? 'space-between' : 'flex-end', alignItems: 'center', gap: 8, marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+                {isSystemAdmin && (
+                  <button
+                    className="btn pri sm"
+                    onClick={() => setSelectedStaffDetail(staff)}
+                    style={{ padding: '6px 12px', fontSize: 12, cursor: 'pointer', background: '#2563eb', color: '#fff', border: 'none', fontWeight: 700, borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    🔍 View More Details
+                  </button>
+                )}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    className="btn sec sm"
+                    onClick={() => openEditModal(staff)}
+                    style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+                  >
+                    ✏️ Edit
+                  </button>
+                  <button
+                    className="btn sec sm"
+                    onClick={() => handleDelete(staff)}
+                    style={{ padding: '6px 10px', fontSize: 12, color: '#ef4444', borderColor: '#fca5a5', cursor: 'pointer' }}
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
               </div>
             </div>
           ))}

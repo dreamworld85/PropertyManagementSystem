@@ -13,7 +13,14 @@ export default function Projects({ company, projects = [], db, onOpen, onNew }) 
   const projectStatuses = safeSettings.projectStatuses || SEED.settings.projectStatuses;
   const approvalStatuses = safeSettings.approvalStatuses || SEED.settings.approvalStatuses;
 
-  const list = (projects || []).filter((p) => (sf === "All" || p.status === sf) && (p.name || '').toLowerCase().includes(q.toLowerCase()));
+  const list = (projects || [])
+    .filter((p) => (sf === "All" || p.status === sf) && (p.name || '').toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => {
+      const idA = parseInt(a.id || a.uuid || 0, 10);
+      const idB = parseInt(b.id || b.uuid || 0, 10);
+      if (!isNaN(idA) && !isNaN(idB) && idA !== idB) return idB - idA;
+      return String(b.id || b.uuid || '').localeCompare(String(a.id || a.uuid || ''));
+    });
 
   return (
     <div>

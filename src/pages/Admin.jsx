@@ -74,6 +74,67 @@ export default function Admin({
   const [teamCategory, setTeamCategory] = useState("project"); // "project" or "discipline"
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [projectTeammateSearchQuery, setProjectTeammateSearchQuery] = useState("");
+  const [adminProjectSearchQuery, setAdminProjectSearchQuery] = useState("");
+  const [adminClientSearchQuery, setAdminClientSearchQuery] = useState("");
+  const [previewDoc, setPreviewDoc] = useState(null);
+
+  // Admin Document & Financial States and Handlers
+  const [adminDocInput, setAdminDocInput] = useState("");
+  const [isAdminEditingCost, setIsAdminEditingCost] = useState(false);
+  const [adminCostVal, setAdminCostVal] = useState(0);
+
+  const handleAdminDocStatusChange = async (docId, newStatus) => {
+    const docObj = (db.project_documents || db.documents || []).find(d => String(d.id || d.uuid) === String(docId));
+    if (docObj) {
+      docObj.status = newStatus;
+    }
+    try {
+      await fetch(`/api/documents/${docId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+    } catch(e) {}
+  };
+
+  const handleAdminDocUpload = async (doc, file) => {
+    if (!file || !doc) return;
+    const docId = doc.id || doc.uuid;
+    doc.fileName = file.name;
+    const formData = new FormData();
+    formData.append('document', file);
+    formData.append('documentId', docId);
+    try {
+      await fetch('/api/upload-document', {
+        method: 'POST',
+        body: formData
+      });
+    } catch(e) {}
+  };
+
+  const handleAdminAddDoc = async (projId) => {
+    if (!adminDocInput.trim()) return;
+    const docName = adminDocInput.trim();
+    setAdminDocInput("");
+    const newDoc = {
+      id: `doc_${Date.now()}`,
+      uuid: `doc_${Date.now()}`,
+      projectId: projId,
+      documentName: docName,
+      status: "Pending",
+      fileName: null
+    };
+    if (!db.project_documents) db.project_documents = [];
+    db.project_documents.push(newDoc);
+
+    try {
+      await fetch('/api/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: projId, documentName: docName })
+      });
+    } catch(e) {}
+  };
 
   // Helper to find the Project Manager for a given project or project ID
   const getProjectManager = (target) => {
@@ -353,48 +414,72 @@ export default function Admin({
 
       {/* PROJECTS ADMIN TAB */}
       {subTab === "projects" && (
-        <div className="split-1-18">
+        <div className="split-1-18" style={{ gap: 10 }}>
           {/* Projects List Master Pane */}
-          <div className="card" style={{ padding: 18, background: "#fff", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 14, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div className="h3 disp" style={{ margin: 0 }}>Projects List</div>
-              <button className="btn sm" onClick={() => setModal({ type: "project" })}>
-                ＋ Create Project
+              <div>
+                <div className="h3 disp" style={{ margin: 0, fontSize: 14.5, fontWeight: 800, color: "var(--ink)" }}>Projects List</div>
+                <div style={{ fontSize: 10.5, color: "var(--muted)" }}>{db.projects.length} Total Projects</div>
+              </div>
+              <button className="btn sm" onClick={() => setModal({ type: "project" })} style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, borderRadius: 6, padding: "4px 10px", fontSize: 11 }}>
+                ＋ Create
               </button>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "60vh", overflowY: "auto" }}>
-              {db.projects.map(p => (
-                <div
-                  key={p.id}
-                  onClick={() => setSelProjectId(p.id)}
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: selProjectId === p.id ? "1px solid var(--accent2)" : "1px solid var(--line)",
-                    background: selProjectId === p.id ? "var(--surface)" : "#fff",
-                    cursor: "pointer",
-                    transition: "all 0.15s"
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontWeight: 600, fontSize: 13.5, color: "var(--ink)" }}>{p.name}</span>
-                    <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
-                    <span>{db.clients.find(c => c.id === p.clientId)?.name || "—"}</span>
-                    <span>{p.progress}%</span>
-                  </div>
-                </div>
-              ))}
+
+            {/* Filter Search Input */}
+            <input
+              type="text"
+              className="inp"
+              placeholder="🔍 Filter projects..."
+              value={adminProjectSearchQuery}
+              onChange={(e) => setAdminProjectSearchQuery(e.target.value)}
+              style={{ fontSize: 11.5, padding: "5px 8px", background: "#f8fafc" }}
+            />
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "calc(100vh - 180px)", overflowY: "auto", paddingRight: 2 }}>
+              {db.projects
+                .filter(p => !adminProjectSearchQuery.trim() || p.name.toLowerCase().includes(adminProjectSearchQuery.toLowerCase()))
+                .map(p => {
+                  const isSelected = selProjectId === p.id;
+                  const pClient = db.clients.find(c => String(c.id) === String(p.clientId) || String(c.uuid) === String(p.clientId));
+
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelProjectId(p.id)}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: isSelected ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                        background: isSelected ? "#f0f7ff" : "#ffffff",
+                        boxShadow: isSelected ? "0 2px 8px rgba(37,99,235,0.08)" : "none",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontWeight: 800, fontSize: 13, color: isSelected ? "#1e40af" : "var(--ink)" }}>{p.name}</span>
+                        <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10.5, color: "#64748b", marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600 }}>{pClient?.name || p.clientName || "—"}</span>
+                        <span style={{ fontWeight: 800, color: isSelected ? "#2563eb" : "var(--ink)" }}>{p.progress || 0}%</span>
+                      </div>
+                      <Bar value={p.progress || 0} color={barColor(p.progress || 0)} />
+                    </div>
+                  );
+                })}
             </div>
           </div>
 
           {/* Project Details Pane */}
           {selectedProj ? (
-            <div className="card" style={{ padding: 24, background: "#fff", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              
+              {/* TOP HEADER CONTROL BANNER */}
               {isEditingProject && editProjForm ? (
-                /* Inline Edit Project Form Card */
-                <div style={{ padding: 20, background: "var(--surface)", borderRadius: 14, border: "1.5px solid var(--accent2)", display: "flex", flexDirection: "column", gap: 16 }}>
+                <div className="card" style={{ padding: 20, background: "#fff", borderRadius: 16, border: "1.5px solid var(--accent2)", display: "flex", flexDirection: "column", gap: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: 10 }}>
                     <h3 className="disp" style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Edit Project: {selectedProj.name}</h3>
                     <button className="muted" onClick={() => setIsEditingProject(false)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 18 }}>×</button>
@@ -428,12 +513,6 @@ export default function Admin({
                                 {c.name} {c.sector ? `(${c.sector})` : ""}
                               </option>
                             ))}
-                          {(db.clients || []).filter(c =>
-                            (c.name || "").toLowerCase().includes(editClientSearchQuery.toLowerCase()) ||
-                            (c.sector || "").toLowerCase().includes(editClientSearchQuery.toLowerCase())
-                          ).length === 0 && (
-                            <option value="" disabled>No matching clients found</option>
-                          )}
                         </select>
                       </div>
                     </Field>
@@ -470,278 +549,410 @@ export default function Admin({
                   </div>
                 </div>
               ) : (
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-                    <div>
-                      <h2 className="disp" style={{ fontWeight: 800, fontSize: 22, color: "var(--ink)", margin: 0 }}>{selectedProj.name}</h2>
-                      <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>{selectedProj.desc || "No description provided."}</p>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <>
+                  <div className="card" style={{ padding: "8px 12px", background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", borderRadius: 10, color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <h2 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#fff" }}>{selectedProj.name}</h2>
                       <Tag label={selectedProj.status} color={statusColor(selectedProj.status, db.settings.projectStatuses)} />
-                      <button
-                        className="btn sec sm"
-                        onClick={() => startEditProject(selectedProj)}
-                        style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, cursor: "pointer" }}
-                      >
-                        ✏️ Edit Project
-                      </button>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 2 }}>
+                      Category: <strong style={{ color: "#38bdf8" }}>{selectedProj.category || "Full Engineering"}</strong> · Start: <strong style={{ color: "#e2e8f0" }}>{fmt(selectedProj.start)}</strong> · Target: <strong style={{ color: "#e2e8f0" }}>{fmt(selectedProj.end)}</strong>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Project Manager & Client Information Cards Grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-                {/* Project Manager Card */}
-                <div style={{ padding: 16, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--line)" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600, marginBottom: 10 }}>
-                    👔 Project Manager (Team Leader)
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <Avatar name={getProjectManager(selectedProj).name} size={40} />
-                    <div>
-                      <div style={{ fontWeight: 700, color: "var(--ink)", fontSize: 14.5 }}>
-                        {getProjectManager(selectedProj).name}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ width: 130 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontWeight: 700, marginBottom: 2, color: "#94a3b8" }}>
+                        <span>PROGRESS</span>
+                        <span style={{ color: "#38bdf8", fontWeight: 800 }}>{selectedProj.progress || 0}%</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                        {getProjectManager(selectedProj).role} · {getProjectManager(selectedProj).discipline}
+                      <Bar value={selectedProj.progress || 0} color="#38bdf8" />
+                    </div>
+
+                    <button
+                      className="btn sm"
+                      onClick={() => startEditProject(selectedProj)}
+                      style={{ background: "#3b82f6", color: "#fff", border: "none", fontWeight: 700, padding: "4px 10px", borderRadius: 6, fontSize: 10.5, cursor: "pointer" }}
+                    >
+                      ✏️ Edit
+                    </button>
+                  </div>
+                </div>
+               {/* 2-COLUMN SIDE-BY-SIDE GRID CONTAINER */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" }}>
+                
+                {/* LEFT COLUMN: PM + Client Combo & Financial Overview */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  
+                  {/* COMBINED PM & CLIENT INFO ROW CARD */}
+                  <div className="card" style={{ padding: 10, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    
+                    {/* PM Box */}
+                    <div style={{ padding: "8px 10px", background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>👔</span> Project Manager
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Avatar name={getProjectManager(selectedProj).name} size={32} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{getProjectManager(selectedProj).name}</div>
+                          <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 1 }}>{getProjectManager(selectedProj).role}</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* Client Information Card */}
-                <div style={{ padding: 16, background: "linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)", borderRadius: 12, border: "1px solid #bfdbfe" }}>
-                  <div style={{ fontSize: 11, color: "var(--accent)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span>🏢</span> Client Information
-                  </div>
-                  {getClientForProject(selectedProj) || selectedProj.clientName ? (
-                    (() => {
-                      const c = getClientForProject(selectedProj) || { name: selectedProj.clientName, sector: selectedProj.clientSector, email: selectedProj.clientEmail, phone: selectedProj.clientPhone };
-                      return (
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <Avatar name={c.name} size={40} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 700, color: "var(--ink)", fontSize: 14.5, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                              {c.name}
-                            </div>
-                            <div style={{ fontSize: 12, color: "var(--accent2)", fontWeight: 600, marginTop: 2 }}>
-                              Sector: {c.sector || "Commercial"}
-                            </div>
-                            {(c.email || c.phone) && (
-                              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                {c.email ? `✉ ${c.email}` : ""} {c.phone ? ` · 📞 ${c.phone}` : ""}
+                    {/* Client Box */}
+                    <div style={{ padding: "8px 10px", background: "linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)", borderRadius: 10, border: "1px solid #bfdbfe" }}>
+                      <div style={{ fontSize: 10, color: "var(--accent)", textTransform: "uppercase", fontWeight: 700, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>🏢</span> Client Org
+                      </div>
+                      {getClientForProject(selectedProj) || selectedProj.clientName ? (
+                        (() => {
+                          const c = getClientForProject(selectedProj) || { name: selectedProj.clientName, sector: selectedProj.clientSector };
+                          return (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <Avatar name={c.name} size={32} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{c.name}</div>
+                                <div style={{ fontSize: 10.5, color: "var(--accent2)", fontWeight: 700, marginTop: 1 }}>{c.sector || "Commercial"}</div>
                               </div>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div style={{ fontSize: 11, color: "var(--muted)", fontStyle: "italic" }}>No client assigned</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* FINANCIAL OVERVIEW & BILLING CARD */}
+                  {(() => {
+                    const pMatches = [
+                      String(selectedProj.id).toLowerCase(),
+                      String(selectedProj.uuid || '').toLowerCase(),
+                      String(selectedProj.db_id || '').toLowerCase()
+                    ];
+                    const pInvoices = (db.invoices || []).filter(i => i.projectId && pMatches.includes(String(i.projectId).toLowerCase()));
+                    const pCost = Number(selectedProj.totalCost !== undefined ? selectedProj.totalCost : (selectedProj.total_cost || 0));
+                    const pTotalInvoiced = pInvoices.filter(i => i.status !== "Draft").reduce((sum, i) => sum + Number(i.amount || 0), 0);
+                    const pTotalPaid = pInvoices.filter(i => i.status === "Paid").reduce((sum, i) => sum + Number(i.amount || 0), 0);
+                    const pOutstanding = pCost > 0 ? Math.max(0, pCost - pTotalPaid) : Math.max(0, pTotalInvoiced - pTotalPaid);
+                    const pPaidPercent = pCost > 0 ? Math.min(100, Math.round((pTotalPaid / pCost) * 100)) : (pTotalInvoiced > 0 ? Math.min(100, Math.round((pTotalPaid / pTotalInvoiced) * 100)) : 0);
+
+                    return (
+                      <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: 4 }}>
+                            💳 Financial Overview & Billing
+                          </span>
+                          <span className="pill" style={{ background: "#dcfce7", color: "#15803d", fontSize: 10, fontWeight: 800, padding: "1px 6px" }}>
+                            {pPaidPercent}% Paid
+                          </span>
+                        </div>
+
+                        {/* 4 Metric Chips in 1 Row */}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+                          {/* Total Cost */}
+                          <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <span style={{ fontSize: 9.5, color: "#64748b", fontWeight: 700 }}>Total Cost</span>
+                              {!isAdminEditingCost ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAdminCostVal(pCost);
+                                    setIsAdminEditingCost(true);
+                                  }}
+                                  style={{ background: "#eff6ff", border: "none", color: "#2563eb", fontSize: 9, fontWeight: 800, cursor: "pointer" }}
+                                >
+                                  ✏️
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const val = Number(adminCostVal) || 0;
+                                    selectedProj.totalCost = val;
+                                    selectedProj.total_cost = val;
+                                    if (updateProject) updateProject(selectedProj);
+                                    setIsAdminEditingCost(false);
+                                    fetch(`/api/projects/${selectedProj.id}/total-cost`, {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ totalCost: val })
+                                    }).catch(() => {});
+                                  }}
+                                  style={{ background: "#dcfce7", border: "none", color: "#166534", fontSize: 9, fontWeight: 800, cursor: "pointer" }}
+                                >
+                                  ✓
+                                </button>
+                              )}
+                            </div>
+                            {!isAdminEditingCost ? (
+                              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", marginTop: 2 }}>${pCost.toLocaleString()}</div>
+                            ) : (
+                              <input
+                                type="number"
+                                className="inp"
+                                value={adminCostVal}
+                                onChange={(e) => setAdminCostVal(e.target.value)}
+                                style={{ fontSize: 11, padding: "2px 4px", marginTop: 2, width: "100%" }}
+                              />
                             )}
                           </div>
-                        </div>
-                      );
-                    })()
-                  ) : (
-                    <div style={{ fontSize: 12, color: "var(--muted)", fontStyle: "italic" }}>
-                      No client organization assigned
-                    </div>
-                  )}
-                </div>
-              </div>
 
-              {/* Teammates List Card */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600 }}>
-                    Assigned Teammates ({getProjectTeammates(selectedProj.id).length})
-                  </div>
-                  <button
-                    className="btn sm"
-                    onClick={() => setModal({ type: "user", projectId: selectedProj.id })}
-                    style={{ background: "var(--accent)", color: "#fff", fontWeight: 600, fontSize: 11.5, padding: "5px 12px", borderRadius: 8 }}
-                  >
-                    ＋ Add Teammate
-                  </button>
-                </div>
-
-                {/* Search Bar for Assigned Teammates */}
-                {getProjectTeammates(selectedProj.id).length > 0 && (
-                  <div style={{ marginBottom: 12 }}>
-                    <input
-                      type="text"
-                      className="inp"
-                      placeholder="🔍 Search assigned teammates by name, role, or discipline..."
-                      value={projectTeammateSearchQuery}
-                      onChange={e => setProjectTeammateSearchQuery(e.target.value)}
-                      style={{ background: "#fff", borderRadius: 8, padding: "7px 12px", fontSize: 12, border: "1px solid var(--line)" }}
-                    />
-                  </div>
-                )}
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-                  {getProjectTeammates(selectedProj.id)
-                    .filter(u => {
-                      if (!projectTeammateSearchQuery.trim()) return true;
-                      const q = projectTeammateSearchQuery.toLowerCase();
-                      return (u.name || "").toLowerCase().includes(q) ||
-                             (u.role || "").toLowerCase().includes(q) ||
-                             (u.discipline || "").toLowerCase().includes(q) ||
-                             (u.username || "").toLowerCase().includes(q);
-                    })
-                    .map(u => {
-                      const mateTasks = (db.tasks || []).filter(t => 
-                        (String(t.projectId) === String(selectedProj.id) || String(t.projectId) === String(selectedProj.uuid)) && 
-                        (String(t.assignee) === String(u.id) || String(t.assignee) === String(u.uuid) || (u.name && t.assignee && String(t.assignee).toLowerCase() === u.name.toLowerCase()))
-                      );
-                      const primaryTask = mateTasks[0];
-                      const taskTitle = primaryTask ? primaryTask.title : (u.taskName || u.initialTask || u.taskTitle || `${u.name} - Project Assignment`);
-                      const percent = primaryTask ? (primaryTask.percent !== undefined ? primaryTask.percent : (primaryTask.status === "Done" ? 100 : 0)) : (u.progress !== undefined ? u.progress : 0);
-                      const taskStatus = primaryTask ? primaryTask.status : "In Progress";
-
-                      return (
-                        <div
-                          key={u.id || u.uuid}
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 12,
-                            padding: "16px 18px",
-                            background: "#ffffff",
-                            borderRadius: 14,
-                            border: "1px solid var(--line)",
-                            boxShadow: "0 2px 8px rgba(0, 0, 0, 0.03)",
-                            transition: "all 0.2s ease"
-                          }}
-                        >
-                          {/* 1. TOP HEADER: Teammate Name & Role + Edit/Remove Options */}
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                              <Avatar name={u.name} size={38} />
-                              <div>
-                                <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", lineHeight: 1.2 }}>
-                                  {u.name}
-                                </div>
-                                <div style={{ fontSize: 11.5, color: "#64748b", fontWeight: 600, marginTop: 2 }}>
-                                  {u.role || u.discipline || "Staff"} · <span style={{ color: "var(--accent2)" }}>{u.discipline || "Engineering"}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <button
-                                onClick={() => startEditUser(u)}
-                                title="Edit Teammate Details"
-                                style={{
-                                  background: "#eff6ff",
-                                  border: "1px solid #bfdbfe",
-                                  borderRadius: 7,
-                                  padding: "4px 8px",
-                                  color: "#2563eb",
-                                  cursor: "pointer",
-                                  fontSize: 11.5,
-                                  fontWeight: 700
-                                }}
-                              >
-                                ✏️ Edit
-                              </button>
-                              <button
-                                onClick={() => handleRemoveTeammate(selectedProj.id, u.id)}
-                                title="Remove Teammate"
-                                style={{
-                                  background: "#fef2f2",
-                                  border: "1px solid #fecaca",
-                                  borderRadius: 7,
-                                  padding: "4px 8px",
-                                  color: "#dc2626",
-                                  cursor: "pointer",
-                                  fontSize: 11.5,
-                                  fontWeight: 700
-                                }}
-                              >
-                                🗑️ Remove
-                              </button>
-                            </div>
+                          {/* Total Paid */}
+                          <div style={{ padding: "6px 8px", background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
+                            <div style={{ fontSize: 9.5, color: "#166534", fontWeight: 700 }}>Paid</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: "#15803d", marginTop: 2 }}>${pTotalPaid.toLocaleString()}</div>
                           </div>
 
-                          {/* 2. MIDDLE SECTION: Task Name */}
-                          <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}>
-                            <span style={{ color: "#475569", fontWeight: 600 }}>📍 Task: </span>
-                            <span style={{ fontWeight: 700, color: "var(--ink)" }}>{taskTitle}</span>
+                          {/* Total Invoiced */}
+                          <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                            <div style={{ fontSize: 9.5, color: "#64748b", fontWeight: 700 }}>Invoiced</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", marginTop: 2 }}>${pTotalInvoiced.toLocaleString()}</div>
                           </div>
 
-                          {/* 3. BOTTOM SECTION: Sleek Progress Bar & Percentage */}
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5, fontWeight: 700 }}>
-                              <span style={{ color: "#64748b" }}>Task Completion</span>
-                              <span style={{ color: "var(--accent2)" }}>{percent}%</span>
-                            </div>
-                            <Bar value={percent} color={barColor(percent)} />
+                          {/* Outstanding */}
+                          <div style={{ padding: "6px 8px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa" }}>
+                            <div style={{ fontSize: 9.5, color: "#c2410c", fontWeight: 700 }}>Due</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: "#c2410c", marginTop: 2 }}>${pOutstanding.toLocaleString()}</div>
                           </div>
                         </div>
-                      );
-                    })}
-                  {getProjectTeammates(selectedProj.id).length === 0 && (
-                    <div style={{ padding: "20px 16px", borderRadius: 12, border: "1px dashed var(--line)", textAlign: "center", background: "var(--surface)" }}>
-                      <div style={{ fontSize: 24, marginBottom: 6 }}>👥</div>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--ink)" }}>No teammates assigned yet</div>
-                      <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4, marginBottom: 12 }}>
-                        Add engineering teammates to assign tasks and collaborate on this project.
+
+                        {/* Invoices List / Table */}
+                        <div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Invoices ({pInvoices.length})</span>
+                            <button
+                              className="btn sm"
+                              onClick={() => setModal({ type: "invoice", projectId: selectedProj.id })}
+                              style={{ background: "#2563eb", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}
+                            >
+                              ＋ Issue Invoice
+                            </button>
+                          </div>
+
+                          {pInvoices.length > 0 ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 100, overflowY: "auto" }}>
+                              {pInvoices.map((inv) => (
+                                <div key={inv.id || inv.invoiceNumber} style={{ padding: "4px 8px", background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <div>
+                                    <span style={{ fontWeight: 800, fontSize: 11.5, color: "var(--ink)" }}>{inv.invoiceNumber || inv.id}</span>
+                                    <span style={{ fontSize: 10, color: "#64748b", marginLeft: 6 }}>Due: {inv.dueDate || "N/A"}</span>
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontWeight: 800, fontSize: 11.5, color: "var(--ink)" }}>${Number(inv.amount || 0).toLocaleString()}</span>
+                                    <Tag label={inv.status || "Pending"} color={inv.status === "Paid" ? "#22c55e" : "#f59e0b"} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ padding: 6, textAlign: "center", fontSize: 10.5, color: "#94a3b8", fontStyle: "italic", background: "#f8fafc", borderRadius: 6 }}>
+                              No invoices issued for this project yet.
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <button className="btn sm" onClick={() => setModal({ type: "user", projectId: selectedProj.id })} style={{ background: "var(--accent)", color: "#fff" }}>
-                        ＋ Assign First Teammate
+                    );
+                  })()}
+                </div>
+
+                {/* RIGHT COLUMN: Teammates & Compliance Documents */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  
+                  {/* ASSIGNED TEAMMATES CARD */}
+                  <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>👥</span> Teammates ({getProjectTeammates(selectedProj.id).length})
+                      </div>
+                      <button
+                        className="btn sm"
+                        onClick={() => setModal({ type: "user", projectId: selectedProj.id })}
+                        style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, fontSize: 10.5, padding: "3px 8px", borderRadius: 6 }}
+                      >
+                        ＋ Add Teammate
                       </button>
                     </div>
-                  )}
-                </div>
-              </div>
 
-              {/* Progress and Timeline */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
-                <div>
-                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600, marginBottom: 6 }}>Timeline</div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>
-                    {fmt(selectedProj.start)} to {fmt(selectedProj.end)}
+                    {/* Scrollable Small Box Grid of Teammates */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 6, maxHeight: 170, overflowY: "auto", paddingRight: 2 }}>
+                      {getProjectTeammates(selectedProj.id)
+                        .filter(u => {
+                          if (!projectTeammateSearchQuery.trim()) return true;
+                          const q = projectTeammateSearchQuery.toLowerCase();
+                          return (u.name || "").toLowerCase().includes(q) ||
+                                 (u.role || "").toLowerCase().includes(q);
+                        })
+                        .map(u => {
+                          const mateTasks = (db.tasks || []).filter(t => 
+                            (String(t.projectId) === String(selectedProj.id) || String(t.projectId) === String(selectedProj.uuid)) && 
+                            (String(t.assignee) === String(u.id) || String(t.assignee) === String(u.uuid) || (u.name && t.assignee && String(t.assignee).toLowerCase() === u.name.toLowerCase()))
+                          );
+                          const primaryTask = mateTasks[0];
+                          const taskTitle = primaryTask ? primaryTask.title : (u.taskName || u.initialTask || u.taskTitle || `${u.name} - Assignment`);
+                          const percent = primaryTask ? (primaryTask.percent !== undefined ? primaryTask.percent : (primaryTask.status === "Done" ? 100 : 0)) : (u.progress !== undefined ? u.progress : 0);
+
+                          return (
+                            <div
+                              key={u.id || u.uuid}
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 4,
+                                padding: "8px 10px",
+                                background: "#ffffff",
+                                borderRadius: 8,
+                                border: "1px solid var(--line)"
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <Avatar name={u.name} size={28} />
+                                  <div>
+                                    <div style={{ fontWeight: 800, fontSize: 12, color: "var(--ink)" }}>{u.name}</div>
+                                    <div style={{ fontSize: 10, color: "#64748b" }}>{u.role || "Staff"}</div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 2 }}>
+                                  <button onClick={() => startEditUser(u)} style={{ background: "#eff6ff", border: "none", borderRadius: 4, padding: "2px 4px", color: "#2563eb", cursor: "pointer", fontSize: 9, fontWeight: 700 }}>✏️</button>
+                                  <button onClick={() => handleRemoveTeammate(selectedProj.id, u.id)} style={{ background: "#fef2f2", border: "none", borderRadius: 4, padding: "2px 4px", color: "#dc2626", cursor: "pointer", fontSize: 9, fontWeight: 700 }}>🗑️</button>
+                                </div>
+                              </div>
+
+                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#1e293b", background: "#f8fafc", padding: "3px 6px", borderRadius: 4, border: "1px solid #e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                📍 {taskTitle}
+                              </div>
+
+                              <div>
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontWeight: 700, marginBottom: 2 }}>
+                                  <span style={{ color: "#64748b" }}>Completion</span>
+                                  <span style={{ color: "var(--ink)" }}>{percent}%</span>
+                                </div>
+                                <Bar value={percent} color={barColor(percent)} />
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                      {getProjectTeammates(selectedProj.id).length === 0 && (
+                        <div style={{ padding: 12, textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8, background: "var(--surface)" }}>
+                          <div style={{ fontWeight: 700, fontSize: 11, color: "var(--ink)" }}>No teammates assigned yet</div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600, marginBottom: 6 }}>Progress ({selectedProj.progress}%)</div>
-                  <Bar value={selectedProj.progress} color={barColor(selectedProj.progress)} />
+
+                  {/* REQUIRED DOCUMENT UPLOAD & COMPLIANCE CARD */}
+                  {(() => {
+                    const pMatches = [
+                      String(selectedProj.id).toLowerCase(),
+                      String(selectedProj.uuid || '').toLowerCase(),
+                      String(selectedProj.db_id || '').toLowerCase()
+                    ];
+                    const pDocs = (db.project_documents || db.documents || []).filter(d => d.projectId && pMatches.includes(String(d.projectId).toLowerCase()));
+
+                    return (
+                      <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: 4 }}>
+                            📂 Compliance Documents
+                          </span>
+                          <span className="pill" style={{ background: "#fef3c7", color: "#b45309", fontSize: 10, fontWeight: 800, padding: "1px 6px" }}>
+                            {pDocs.length} Docs
+                          </span>
+                        </div>
+
+                        {/* Scrollable Document Cards Grid (Click to View) */}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 6, maxHeight: 190, overflowY: "auto", paddingRight: 2 }}>
+                          {pDocs.map((doc) => {
+                            const isApproved = doc.status === "Approved";
+                            const isRejected = doc.status === "Rejected";
+                            const badgeBg = isApproved ? "#dcfce7" : isRejected ? "#fee2e2" : "#fef3c7";
+                            const badgeColor = isApproved ? "#15803d" : isRejected ? "#b91c1c" : "#b45309";
+
+                            return (
+                              <div
+                                key={doc.id || doc.uuid}
+                                onClick={() => setPreviewDoc(doc)}
+                                style={{
+                                  padding: "8px 10px",
+                                  borderRadius: 8,
+                                  border: `1px solid ${isApproved ? "#bbf7d0" : "#e2e8f0"}`,
+                                  background: isApproved ? "#f0fdf4" : "#ffffff",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 4,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease"
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                                  <div style={{ fontWeight: 800, fontSize: 12, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                                    {doc.documentName}
+                                  </div>
+                                  <Tag label={doc.status || "Pending"} color={isApproved ? "#22c55e" : isRejected ? "#ef4444" : "#f59e0b"} />
+                                </div>
+
+                                <div style={{ fontSize: 10.5, color: doc.fileName ? "#2563eb" : "#64748b", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {doc.fileName ? `📎 ${doc.fileName}` : `📄 Click to view details`}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {pDocs.length === 0 && (
+                            <div style={{ padding: 12, textAlign: "center", border: "1px dashed #cbd5e1", borderRadius: 8, background: "#f8fafc" }}>
+                              <div style={{ fontWeight: 700, fontSize: 11, color: "var(--ink)" }}>No uploaded documents yet</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="card empty">Select a project to view admin details.</div>
+            </>
           )}
         </div>
+      ) : (
+        <div className="card empty">Select a project to view admin details.</div>
       )}
+    </div>
+  )}
 
       {/* TEAMMATES & TEAMS ADMIN TAB */}
       {subTab === "users" && (
-        <div className="split-1-18">
+        <div className="split-1-18" style={{ gap: 10 }}>
           {/* Left Master List: Existing Teams */}
-          <div className="card" style={{ padding: 18, background: "#fff", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 14, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <h3 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Existing Teams</h3>
-                <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>Select a team or search employee roster</div>
+                <h3 className="disp" style={{ margin: 0, fontSize: 14.5, fontWeight: 800, color: "var(--ink)" }}>Existing Teams</h3>
+                <div style={{ fontSize: 10.5, color: "var(--muted)" }}>Select team or search employee roster</div>
               </div>
-              <button className="btn sm" onClick={() => setModal({ type: "user" })}>
+              <button className="btn sm" onClick={() => setModal({ type: "user" })} style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, borderRadius: 6, padding: "4px 10px", fontSize: 11 }}>
                 ＋ Add Member
               </button>
             </div>
 
-            {/* Employee Search Input Bar */}
-            <div>
-              <input
-                type="text"
-                className="inp"
-                placeholder="🔍 Search employee by name, role, or discipline..."
-                value={userSearchQuery}
-                onChange={e => setUserSearchQuery(e.target.value)}
-                style={{ background: "#fafafa", fontSize: 12, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line)" }}
-              />
-            </div>
+            {/* Search Input Bar */}
+            <input
+              type="text"
+              className="inp"
+              placeholder="🔍 Search employee by name, role..."
+              value={userSearchQuery}
+              onChange={e => setUserSearchQuery(e.target.value)}
+              style={{ fontSize: 11.5, padding: "5px 8px", background: "#f8fafc" }}
+            />
 
             {/* Search Results List when search query is typed */}
             {userSearchQuery.trim() ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "40vh", overflowY: "auto", borderBottom: "1px dashed var(--line)", paddingBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "var(--accent)" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto", borderBottom: "1px dashed var(--line)", paddingBottom: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: "var(--accent)" }}>
                   Matching Employees ({db.users.filter(u => (u.name || "").toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.role || "").toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.discipline || "").toLowerCase().includes(userSearchQuery.toLowerCase())).length})
                 </div>
                 {db.users
@@ -750,37 +961,34 @@ export default function Admin({
                     <div
                       key={u.id}
                       style={{
-                        padding: "10px 12px",
-                        borderRadius: 8,
+                        padding: "6px 8px",
+                        borderRadius: 6,
                         border: "1px solid var(--line)",
                         background: "var(--surface)",
                         display: "flex",
                         alignItems: "center",
-                        gap: 10
+                        gap: 6
                       }}
                     >
-                      <Avatar name={u.name} size={32} />
+                      <Avatar name={u.name} size={26} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: "var(--ink)" }}>{u.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{u.role || "Staff"} · {u.discipline || "Engineering"}</div>
+                        <div style={{ fontWeight: 800, fontSize: 12, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</div>
+                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{u.role || "Staff"}</div>
                       </div>
                       <button
                         className="btn sec sm"
-                        style={{ fontSize: 10.5, padding: "3px 7px" }}
+                        style={{ fontSize: 9.5, padding: "2px 5px" }}
                         onClick={() => startEditUser(u)}
                       >
                         ✏ Edit
                       </button>
                     </div>
                   ))}
-                {db.users.filter(u => (u.name || "").toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.role || "").toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.discipline || "").toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
-                  <div style={{ fontSize: 12, color: "var(--muted)", padding: 8 }}>No employee matches "{userSearchQuery}"</div>
-                )}
               </div>
             ) : null}
 
             {/* Existing Teams List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "calc(100vh - 180px)", overflowY: "auto", paddingRight: 2 }}>
               {db.projects.map(p => {
                 const pTeammates = getProjectTeammates(p.id);
                 const pClient = getClientForProject(p);
@@ -794,23 +1002,24 @@ export default function Admin({
                       setIsEditingUser(false);
                     }}
                     style={{
-                      padding: "12px 14px",
+                      padding: "8px 10px",
                       borderRadius: 10,
-                      border: isSelected ? "1.5px solid var(--accent2)" : "1px solid var(--line)",
-                      background: isSelected ? "var(--surface)" : "#fff",
+                      border: isSelected ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                      background: isSelected ? "#f0f7ff" : "#ffffff",
+                      boxShadow: isSelected ? "0 2px 8px rgba(37,99,235,0.08)" : "none",
                       cursor: "pointer",
-                      transition: "all 0.15s"
+                      transition: "all 0.15s ease"
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: isSelected ? "#1e40af" : "var(--ink)" }}>
                         {p.name} Team
                       </span>
-                      <span className="pill" style={{ fontSize: 10.5 }}>
-                        {pTeammates.length} teammate{pTeammates.length !== 1 ? "s" : ""}
+                      <span className="pill" style={{ fontSize: 9.5, background: isSelected ? "#dbeafe" : "#f1f5f9", color: isSelected ? "#1e40af" : "#475569", fontWeight: 700, padding: "1px 6px" }}>
+                        {pTeammates.length} Mates
                       </span>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10.5, color: "#64748b" }}>
                       <span>Client: <strong style={{ color: "var(--ink)" }}>{pClient ? pClient.name : "N/A"}</strong></span>
                       <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />
                     </div>
@@ -820,244 +1029,191 @@ export default function Admin({
             </div>
           </div>
 
-          {/* Right Detail Pane: Who is PM, Who is Client, Who are Teammates */}
+          {/* Right Detail Pane */}
           {activeTeamProj ? (
-            <div className="card" style={{ padding: 24, background: "#fff", display: "flex", flexDirection: "column", gap: 20 }}>
-              
-              {/* Header */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: 14 }}>
-                <div>
-                  <h2 className="disp" style={{ fontWeight: 800, fontSize: 22, color: "var(--ink)", margin: 0 }}>
-                    {activeTeamProj.name} Team Details
-                  </h2>
-                  <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                    Project team structure, leadership, client, and assigned teammates.
-                  </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* EXECUTIVE TEAM HERO BANNER */}
+              <div className="card" style={{ padding: "8px 12px", background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", borderRadius: 10, color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <h2 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#fff" }}>{activeTeamProj.name} Team Details</h2>
+                    <Tag label={activeTeamProj.status} color={statusColor(activeTeamProj.status, db.settings.projectStatuses)} />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 2 }}>
+                    Client: <strong style={{ color: "#38bdf8" }}>{activeTeamClient?.name || "General"}</strong> · Teammates Assigned: <strong style={{ color: "#e2e8f0" }}>{activeTeamTeammates.length}</strong>
+                  </div>
                 </div>
-                <Tag label={activeTeamProj.status} color={statusColor(activeTeamProj.status, db.settings.projectStatuses)} />
               </div>
 
-              {/* SECTION 1: WHO IS THE PROJECT MANAGER */}
-              <div style={{ padding: 18, background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)", borderRadius: 14, border: "1px solid var(--line)" }}>
-                <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>👔</span> Project Manager (Team Leader)
-                </div>
-                {activeTeamPM ? (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <Avatar name={activeTeamPM.name} size={48} />
-                      <div>
-                        <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 16 }}>{activeTeamPM.name}</div>
-                        <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
-                          {activeTeamPM.role} · <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{activeTeamPM.discipline || "MEP & Management"}</span>
-                        </div>
-                        {activeTeamPM.email && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2 }}>✉ {activeTeamPM.email}</div>}
-                      </div>
+              {/* 2-COLUMN SIDE-BY-SIDE FLEX CONTAINER */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" }}>
+                
+                {/* LEFT COLUMN: PM & Client Info Combined */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* PM Card */}
+                  <div className="card" style={{ padding: 10, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                      <span>👔</span> Project Manager (Leader)
                     </div>
-                    {isEditingUser && editUserForm?.id === activeTeamPM.id ? (
-                      <span className="pill" style={{ background: "var(--accent)", color: "#fff" }}>Editing PM...</span>
-                    ) : (
-                      <button className="btn sec sm" onClick={() => startEditUser(activeTeamPM)}>
-                        ✏ Edit PM
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="empty" style={{ padding: 12, fontSize: 12.5 }}>No Project Manager assigned.</div>
-                )}
-              </div>
-
-              {/* SECTION 2: WHO IS THE CLIENT */}
-              <div style={{ padding: 18, background: "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)", borderRadius: 14, border: "1px solid #bae6fd" }}>
-                <div style={{ fontSize: 11, color: "#0369a1", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>🏢</span> Client Organization
-                </div>
-                {activeTeamClient ? (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                      <Avatar name={activeTeamClient.name} size={48} />
-                      <div>
-                        <div style={{ fontWeight: 800, color: "#0c4a6e", fontSize: 16 }}>{activeTeamClient.name}</div>
-                        <div style={{ fontSize: 12.5, color: "#0369a1", marginTop: 2 }}>
-                          Sector: <strong>{activeTeamClient.sector || "General"}</strong> · Contact: <strong>{activeTeamClient.contactName || activeTeamClient.name}</strong>
-                        </div>
-                        <div style={{ fontSize: 11.5, color: "#0284c7", marginTop: 2 }}>
-                          ✉ {activeTeamClient.email || activeTeamClient.contact || "N/A"} {activeTeamClient.phone ? `· 📞 ${activeTeamClient.phone}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                    <button className="btn sec sm" onClick={() => { setSelClientId(activeTeamClient.id); setSubTab("clients"); }}>
-                      🏢 View Client Profile
-                    </button>
-                  </div>
-                ) : (
-                  <div className="empty" style={{ padding: 12, fontSize: 12.5 }}>No client linked to this team.</div>
-                )}
-              </div>
-
-              {/* SECTION 3: WHO ARE THE TEAMMATES IN THIS TEAM */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <div style={{ fontSize: 12, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span>👥</span> Teammates in this Team ({activeTeamTeammates.length})
-                  </div>
-                  <button className="btn sm" onClick={() => setModal({ type: "user", projectId: activeTeamProj?.id })}>
-                    ＋ Add Teammate
-                  </button>
-                </div>
-
-                {/* Search Teammates Input Box */}
-                <div style={{ marginBottom: 14 }}>
-                  <input
-                    type="text"
-                    className="inp"
-                    placeholder="🔍 Search teammates by name, role, or discipline..."
-                    value={userSearchQuery}
-                    onChange={e => setUserSearchQuery(e.target.value)}
-                    style={{ background: "#fff", borderRadius: 10, padding: "9px 14px", border: "1px solid var(--line)" }}
-                  />
-                </div>
-
-                {/* Inline Editing for selected teammate */}
-                {isEditingUser && editUserForm ? (
-                  <div className="card" style={{ padding: 20, background: "#fff", border: "1.5px solid var(--accent2)", borderRadius: 14, marginBottom: 16 }}>
-                    <h3 className="disp" style={{ margin: "0 0 14px 0", fontSize: 16 }}>Edit Teammate: {editUserForm.name}</h3>
-                    <Field l="Full Name">
-                      <input className="inp" value={editUserForm.name} onChange={e => setEditVal("name", e.target.value)} />
-                    </Field>
-                    <div className="row2" style={{ marginTop: 10 }}>
-                      <Field l="Username">
-                        <input className="inp" value={editUserForm.username} onChange={e => setEditVal("username", e.target.value)} />
-                      </Field>
-                      <Field l="Password">
-                        <input className="inp" type="text" value={editUserForm.password} onChange={e => setEditVal("password", e.target.value)} />
-                      </Field>
-                    </div>
-                    <div className="row2" style={{ marginTop: 10 }}>
-                      <Field l="Role Title">
-                        <input className="inp" value={editUserForm.role} onChange={e => setEditVal("role", e.target.value)} />
-                      </Field>
-                      <Field l="Discipline Group">
-                        <select className="inp" value={editUserForm.discipline} onChange={e => setEditVal("discipline", e.target.value)}>
-                          {db.settings.disciplines.map(d => <option key={d}>{d}</option>)}
-                        </select>
-                      </Field>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-                      <button className="btn sec sm" onClick={() => setIsEditingUser(false)}>Cancel</button>
-                      <button className="btn sm" onClick={saveEditedUser}>Save Changes</button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* List of Teammates */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
-                  {activeTeamTeammates
-                    .filter(u => {
-                      if (!userSearchQuery.trim()) return true;
-                      const q = userSearchQuery.toLowerCase();
-                      return (u.name || "").toLowerCase().includes(q) ||
-                             (u.role || "").toLowerCase().includes(q) ||
-                             (u.discipline || "").toLowerCase().includes(q) ||
-                             (u.username || "").toLowerCase().includes(q);
-                    })
-                    .map((u) => {
-                    const mateTasks = (db.tasks || []).filter(t => 
-                      (String(t.projectId) === String(activeTeamProj?.id) || String(t.projectId) === String(activeTeamProj?.uuid) || String(t.projectId) === String(activeTeamProj?.name)) && 
-                      (String(t.assignee) === String(u.id) || String(t.assignee) === String(u.uuid) || (u.name && t.assignee && String(t.assignee).toLowerCase() === u.name.toLowerCase()))
-                    );
-                    const primaryTask = mateTasks[0];
-                    const assignedTaskTitle = primaryTask ? primaryTask.title : (u.taskName || u.initialTask || u.taskTitle || `${u.name} - Project Assignment`);
-                    const percent = primaryTask ? (primaryTask.percent !== undefined ? primaryTask.percent : (primaryTask.status === "Done" ? 100 : 0)) : (u.progress !== undefined ? u.progress : 0);
-
-                    return (
-                      <div
-                        key={u.id || u.uuid}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 12,
-                          padding: "16px 18px",
-                          background: "#ffffff",
-                          borderRadius: 14,
-                          border: "1px solid var(--line)",
-                          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.03)",
-                          transition: "all 0.2s ease"
-                        }}
-                      >
-                        {/* 1. TOP HEADER: Teammate Name & Role + Edit/Remove Options */}
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                            <Avatar name={u.name} size={40} />
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", lineHeight: 1.2 }}>
-                                {u.name}
-                              </div>
-                              <div style={{ fontSize: 11.5, color: "#64748b", fontWeight: 600, marginTop: 2 }}>
-                                {u.role || u.discipline || "Staff"} · <span style={{ color: "var(--accent2)" }}>{u.discipline || "Engineering"}</span>
-                              </div>
+                    {activeTeamPM ? (
+                      <div style={{ padding: "6px 8px", background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)", borderRadius: 8, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <Avatar name={activeTeamPM.name} size={32} />
+                          <div>
+                            <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 13 }}>{activeTeamPM.name}</div>
+                            <div style={{ fontSize: 10.5, color: "#64748b" }}>
+                              {activeTeamPM.role} · <span style={{ color: "#2563eb", fontWeight: 700 }}>{activeTeamPM.discipline || "MEP"}</span>
                             </div>
                           </div>
+                        </div>
+                        <button className="btn sec sm" style={{ padding: "3px 6px", fontSize: 10, fontWeight: 700 }} onClick={() => startEditUser(activeTeamPM)}>
+                          ✏️ Edit
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ padding: 8, fontSize: 11, color: "var(--muted)", fontStyle: "italic" }}>No PM assigned</div>
+                    )}
+                  </div>
 
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <button
-                              onClick={() => startEditUser(u)}
-                              title="Edit Teammate Details"
-                              style={{
-                                background: "#eff6ff",
-                                border: "1px solid #bfdbfe",
-                                borderRadius: 7,
-                                padding: "4px 8px",
-                                color: "#2563eb",
-                                cursor: "pointer",
-                                fontSize: 11.5,
-                                fontWeight: 700
-                              }}
-                            >
-                              ✏️ Edit
-                            </button>
-                            <button
-                              onClick={() => handleRemoveTeammate(activeTeamProj.id, u.id)}
-                              title="Remove Teammate"
-                              style={{
-                                background: "#fef2f2",
-                                border: "1px solid #fecaca",
-                                borderRadius: 7,
-                                padding: "4px 8px",
-                                color: "#dc2626",
-                                cursor: "pointer",
-                                fontSize: 11.5,
-                                fontWeight: 700
-                              }}
-                            >
-                              🗑️ Remove
-                            </button>
+                  {/* Client Card */}
+                  <div className="card" style={{ padding: 10, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 10, color: "#0369a1", textTransform: "uppercase", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                      <span>🏢</span> Client Organization
+                    </div>
+                    {activeTeamClient ? (
+                      <div style={{ padding: "6px 8px", background: "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)", borderRadius: 8, border: "1px solid #bae6fd", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <Avatar name={activeTeamClient.name} size={32} />
+                          <div>
+                            <div style={{ fontWeight: 800, color: "#0c4a6e", fontSize: 13 }}>{activeTeamClient.name}</div>
+                            <div style={{ fontSize: 10.5, color: "#0369a1" }}>Sector: {activeTeamClient.sector || "General"}</div>
                           </div>
                         </div>
+                        <button className="btn sec sm" style={{ padding: "3px 6px", fontSize: 10, fontWeight: 700, color: "#0284c7" }} onClick={() => { setSelClientId(activeTeamClient.id); setSubTab("clients"); }}>
+                          🏢 View
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ padding: 8, fontSize: 11, color: "var(--muted)", fontStyle: "italic" }}>No client linked</div>
+                    )}
+                  </div>
+                </div>
 
-                        {/* 2. MIDDLE SECTION: Task Name */}
-                        <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}>
-                          <span style={{ color: "#475569", fontWeight: 600 }}>📍 Task: </span>
-                          <span style={{ fontWeight: 700, color: "var(--ink)" }}>{assignedTaskTitle}</span>
+                {/* RIGHT COLUMN: Teammates in this Team */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>👥</span> Teammates in Team ({activeTeamTeammates.length})
+                      </div>
+                      <button className="btn sm" onClick={() => setModal({ type: "user", projectId: activeTeamProj?.id })} style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, fontSize: 10.5, padding: "3px 8px", borderRadius: 6 }}>
+                        ＋ Add Teammate
+                      </button>
+                    </div>
+
+                    {/* Search Teammates Input Box */}
+                    <input
+                      type="text"
+                      className="inp"
+                      placeholder="🔍 Search teammates..."
+                      value={userSearchQuery}
+                      onChange={e => setUserSearchQuery(e.target.value)}
+                      style={{ fontSize: 11, padding: "4px 6px", background: "#f8fafc" }}
+                    />
+
+                    {/* Inline Editing for selected teammate */}
+                    {isEditingUser && editUserForm ? (
+                      <div style={{ padding: 10, background: "#fff", border: "1.5px solid var(--accent2)", borderRadius: 10 }}>
+                        <div style={{ fontWeight: 800, fontSize: 12, marginBottom: 8 }}>Edit Teammate: {editUserForm.name}</div>
+                        <Field l="Full Name">
+                          <input className="inp" style={{ fontSize: 11, padding: "3px 6px" }} value={editUserForm.name} onChange={e => setEditVal("name", e.target.value)} />
+                        </Field>
+                        <div className="row2" style={{ marginTop: 6 }}>
+                          <Field l="Role Title">
+                            <input className="inp" style={{ fontSize: 11, padding: "3px 6px" }} value={editUserForm.role} onChange={e => setEditVal("role", e.target.value)} />
+                          </Field>
+                          <Field l="Discipline Group">
+                            <select className="inp" style={{ fontSize: 11, padding: "3px 6px" }} value={editUserForm.discipline} onChange={e => setEditVal("discipline", e.target.value)}>
+                              {db.settings.disciplines.map(d => <option key={d}>{d}</option>)}
+                            </select>
+                          </Field>
                         </div>
-
-                        {/* 3. BOTTOM SECTION: Sleek Progress Bar & Percentage */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5, fontWeight: 700 }}>
-                            <span style={{ color: "#64748b" }}>Task Completion</span>
-                            <span style={{ color: "var(--accent2)" }}>{percent}%</span>
-                          </div>
-                          <Bar value={percent} color={barColor(percent)} />
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+                          <button className="btn sec sm" style={{ fontSize: 10 }} onClick={() => setIsEditingUser(false)}>Cancel</button>
+                          <button className="btn sm" style={{ fontSize: 10, background: "var(--accent)", color: "#fff" }} onClick={saveEditedUser}>Save</button>
                         </div>
                       </div>
-                    );
-                  })}
+                    ) : null}
 
-                  {activeTeamTeammates.length === 0 && (
-                    <div className="empty" style={{ padding: 24, textAlign: "center" }}>
-                      No teammates assigned to tasks in the {activeTeamProj.name} team yet.
+                    {/* Scrollable Teammates Grid */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 6, maxHeight: 210, overflowY: "auto", paddingRight: 2 }}>
+                      {activeTeamTeammates
+                        .filter(u => {
+                          if (!userSearchQuery.trim()) return true;
+                          const q = userSearchQuery.toLowerCase();
+                          return (u.name || "").toLowerCase().includes(q) ||
+                                 (u.role || "").toLowerCase().includes(q) ||
+                                 (u.discipline || "").toLowerCase().includes(q);
+                        })
+                        .map((u) => {
+                        const mateTasks = (db.tasks || []).filter(t => 
+                          (String(t.projectId) === String(activeTeamProj?.id) || String(t.projectId) === String(activeTeamProj?.uuid) || String(t.projectId) === String(activeTeamProj?.name)) && 
+                          (String(t.assignee) === String(u.id) || String(t.assignee) === String(u.uuid) || (u.name && t.assignee && String(t.assignee).toLowerCase() === u.name.toLowerCase()))
+                        );
+                        const primaryTask = mateTasks[0];
+                        const assignedTaskTitle = primaryTask ? primaryTask.title : (u.taskName || u.initialTask || u.taskTitle || `${u.name} - Assignment`);
+                        const percent = primaryTask ? (primaryTask.percent !== undefined ? primaryTask.percent : (primaryTask.status === "Done" ? 100 : 0)) : (u.progress !== undefined ? u.progress : 0);
+
+                        return (
+                          <div
+                            key={u.id || u.uuid}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 4,
+                              padding: "8px 10px",
+                              background: "#ffffff",
+                              borderRadius: 8,
+                              border: "1px solid var(--line)"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <Avatar name={u.name} size={28} />
+                                <div>
+                                  <div style={{ fontWeight: 800, fontSize: 12, color: "var(--ink)" }}>{u.name}</div>
+                                  <div style={{ fontSize: 10, color: "#64748b" }}>{u.role || "Staff"}</div>
+                                </div>
+                              </div>
+
+                              <div style={{ display: "flex", gap: 2 }}>
+                                <button onClick={() => startEditUser(u)} style={{ background: "#eff6ff", border: "none", borderRadius: 4, padding: "2px 4px", color: "#2563eb", cursor: "pointer", fontSize: 9, fontWeight: 700 }}>✏️</button>
+                                <button onClick={() => handleRemoveTeammate(activeTeamProj.id, u.id)} style={{ background: "#fef2f2", border: "none", borderRadius: 4, padding: "2px 4px", color: "#dc2626", cursor: "pointer", fontSize: 9, fontWeight: 700 }}>🗑️</button>
+                              </div>
+                            </div>
+
+                            <div style={{ fontSize: 10.5, fontWeight: 700, color: "#1e293b", background: "#f8fafc", padding: "3px 6px", borderRadius: 4, border: "1px solid #e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              📍 {assignedTaskTitle}
+                            </div>
+
+                            <div>
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontWeight: 700, marginBottom: 2 }}>
+                                <span style={{ color: "#64748b" }}>Completion</span>
+                                <span style={{ color: "var(--ink)" }}>{percent}%</span>
+                              </div>
+                              <Bar value={percent} color={barColor(percent)} />
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {activeTeamTeammates.length === 0 && (
+                        <div style={{ padding: 12, textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8, background: "var(--surface)" }}>
+                          <div style={{ fontWeight: 700, fontSize: 11, color: "var(--ink)" }}>No teammates assigned to this team</div>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -1070,44 +1226,65 @@ export default function Admin({
 
       {/* CLIENTS ADMIN TAB */}
       {subTab === "clients" && (
-        <div className="split-1-18">
+        <div className="split-1-18" style={{ gap: 10 }}>
           {/* Clients List Master Pane */}
-          <div className="card" style={{ padding: 18, background: "#fff", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 14, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.02)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div className="h3 disp" style={{ margin: 0 }}>Clients Directory</div>
-              <button className="btn sm" onClick={() => setModal({ type: "client" })}>
-                ＋ Create Client
+              <div>
+                <div className="h3 disp" style={{ margin: 0, fontSize: 14.5, fontWeight: 800, color: "var(--ink)" }}>Clients Directory</div>
+                <div style={{ fontSize: 10.5, color: "var(--muted)" }}>{db.clients.length} Total Clients</div>
+              </div>
+              <button className="btn sm" onClick={() => setModal({ type: "client" })} style={{ background: "var(--accent)", color: "#fff", fontWeight: 700, borderRadius: 6, padding: "4px 10px", fontSize: 11 }}>
+                ＋ Create
               </button>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "60vh", overflowY: "auto" }}>
-              {db.clients.map(c => {
-                const clientProjects = getClientProjects(c);
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      setSelClientId(c.id);
-                      setIsEditingClient(false);
-                    }}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      border: selClientId === c.id ? "1px solid var(--accent2)" : "1px solid var(--line)",
-                      background: selClientId === c.id ? "var(--surface)" : "#fff",
-                      cursor: "pointer",
-                      transition: "all 0.15s"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontWeight: 600, fontSize: 13.5, color: "var(--ink)" }}>{c.name}</span>
-                      <span className="pill" style={{ fontSize: 10.5 }}>{clientProjects.length} Project{clientProjects.length !== 1 ? 's' : ''}</span>
+
+            {/* Filter Search Input */}
+            <input
+              type="text"
+              className="inp"
+              placeholder="🔍 Filter clients..."
+              value={adminClientSearchQuery}
+              onChange={(e) => setAdminClientSearchQuery(e.target.value)}
+              style={{ fontSize: 11.5, padding: "5px 8px", background: "#f8fafc" }}
+            />
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "calc(100vh - 180px)", overflowY: "auto", paddingRight: 2 }}>
+              {db.clients
+                .filter(c => !adminClientSearchQuery.trim() || (c.name || "").toLowerCase().includes(adminClientSearchQuery.toLowerCase()) || (c.sector || "").toLowerCase().includes(adminClientSearchQuery.toLowerCase()))
+                .map(c => {
+                  const clientProjects = getClientProjects(c);
+                  const isSelected = selClientId === c.id;
+
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => {
+                        setSelClientId(c.id);
+                        setIsEditingClient(false);
+                      }}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: isSelected ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                        background: isSelected ? "#f0f7ff" : "#ffffff",
+                        boxShadow: isSelected ? "0 2px 8px rgba(37,99,235,0.08)" : "none",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                        <span style={{ fontWeight: 800, fontSize: 13, color: isSelected ? "#1e40af" : "var(--ink)" }}>{c.name}</span>
+                        <span className="pill" style={{ fontSize: 9.5, background: isSelected ? "#dbeafe" : "#f1f5f9", color: isSelected ? "#1e40af" : "#475569", fontWeight: 700, padding: "1px 6px" }}>
+                          {clientProjects.length} Proj
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: "#64748b", fontWeight: 600 }}>
+                        Sector: {c.sector || "General"}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>
-                      {c.sector}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
 
@@ -1115,32 +1292,35 @@ export default function Admin({
           {selectedClient ? (
             isEditingClient && editClientForm ? (
               /* Inline Edit Mode */
-              <div className="card" style={{ padding: 24, background: "#fff", display: "flex", flexDirection: "column", gap: 18 }}>
-                <div className="h3 disp" style={{ margin: 0, borderBottom: "1px solid var(--line)", paddingBottom: 10 }}>
-                  Edit Client Details
+              <div className="card" style={{ padding: 16, background: "#fff", borderRadius: 14, border: "1.5px solid var(--accent2)", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div className="h3 disp" style={{ margin: 0, fontSize: 16, fontWeight: 800, borderBottom: "1px solid var(--line)", paddingBottom: 8 }}>
+                  ✏️ Edit Client Details: {selectedClient.name}
                 </div>
                 
-                <Field l="Client Name">
-                  <input className="inp" value={editClientForm.name} onChange={e => setEditClientVal("name", e.target.value)} />
-                </Field>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <Field l="Client Organization Name">
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} value={editClientForm.name} onChange={e => setEditClientVal("name", e.target.value)} />
+                  </Field>
 
-                <Field l="Sector">
-                  <input className="inp" value={editClientForm.sector} onChange={e => setEditClientVal("sector", e.target.value)} />
-                </Field>
+                  <Field l="Industry / Sector">
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} value={editClientForm.sector} onChange={e => setEditClientVal("sector", e.target.value)} />
+                  </Field>
+                </div>
 
                 {/* ASSIGNED PROJECT MANAGER WITH SEARCH BAR */}
                 <Field l="Assigned Project Manager / Staff Lead">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <input
                       type="text"
                       className="inp"
                       placeholder="🔍 Search existing staff by name, role, or discipline..."
                       value={editPmSearchQuery}
                       onChange={e => setEditPmSearchQuery(e.target.value)}
-                      style={{ fontSize: 12, padding: "6px 10px", background: "#f8fafc" }}
+                      style={{ fontSize: 11, padding: "4px 8px", background: "#f8fafc" }}
                     />
                     <select
                       className="inp"
+                      style={{ fontSize: 12, padding: "5px 8px" }}
                       value={editClientForm.projectManagerId}
                       onChange={e => setEditClientVal("projectManagerId", e.target.value)}
                     >
@@ -1156,186 +1336,209 @@ export default function Admin({
                             {u.name === "You" ? "Administrator" : u.name} {u.role ? `(${u.role})` : ""}
                           </option>
                         ))}
-                      {(db.users || [])
-                        .filter(u => !u.role?.toLowerCase().includes("client") && !u.userType?.toLowerCase().includes("client"))
-                        .filter(u =>
-                          (u.name || "").toLowerCase().includes(editPmSearchQuery.toLowerCase()) ||
-                          (u.role || "").toLowerCase().includes(editPmSearchQuery.toLowerCase()) ||
-                          (u.discipline || "").toLowerCase().includes(editPmSearchQuery.toLowerCase())
-                        ).length === 0 && (
-                          <option value="" disabled>No matching staff found</option>
-                        )}
                     </select>
                   </div>
                 </Field>
 
                 <div className="row2">
                   <Field l="Contact Email">
-                    <input className="inp" value={editClientForm.email} onChange={e => setEditClientVal("email", e.target.value)} />
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} value={editClientForm.email} onChange={e => setEditClientVal("email", e.target.value)} />
                   </Field>
                   <Field l="Contact Phone">
-                    <input className="inp" value={editClientForm.phone} onChange={e => setEditClientVal("phone", e.target.value)} />
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} value={editClientForm.phone} onChange={e => setEditClientVal("phone", e.target.value)} />
                   </Field>
                 </div>
 
-                <div className="row2" style={{ borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+                <div className="row2" style={{ borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
                   <Field l="Portal Username">
-                    <input className="inp" value={editClientForm.username} onChange={e => setEditClientVal("username", e.target.value)} />
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} value={editClientForm.username} onChange={e => setEditClientVal("username", e.target.value)} />
                   </Field>
                   <Field l="Portal Password">
-                    <input className="inp" type="text" value={editClientForm.password} onChange={e => setEditClientVal("password", e.target.value)} />
+                    <input className="inp" style={{ fontSize: 12, padding: "5px 8px" }} type="text" value={editClientForm.password} onChange={e => setEditClientVal("password", e.target.value)} />
                   </Field>
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
-                  <button className="btn sec sm" onClick={() => setIsEditingClient(false)}>Cancel</button>
-                  <button className="btn sm" onClick={saveEditedClient}>Save Changes</button>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                  <button className="btn sec sm" style={{ fontSize: 11 }} onClick={() => setIsEditingClient(false)}>Cancel</button>
+                  <button className="btn sm" style={{ fontSize: 11, background: "var(--accent)", color: "#fff", fontWeight: 700 }} onClick={saveEditedClient}>Save Changes</button>
                 </div>
               </div>
             ) : (
               /* Details View Mode */
-              <div className="card" style={{ padding: 24, background: "#fff", display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <Avatar name={selectedClient.name} size={64} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* EXECUTIVE CLIENT HERO BANNER */}
+                <div className="card" style={{ padding: "8px 12px", background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", borderRadius: 10, color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 200 }}>
+                    <Avatar name={selectedClient.name} size={38} />
                     <div>
-                      <h2 className="disp" style={{ fontWeight: 800, fontSize: 22, color: "var(--ink)" }}>{selectedClient.name}</h2>
-                      <p className="muted" style={{ fontSize: 13.5, marginTop: 4 }}>
-                        Sector: {selectedClient.sector}
-                      </p>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <h2 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#fff" }}>{selectedClient.name}</h2>
+                        <span className="pill" style={{ background: "rgba(56,189,248,0.2)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.4)", fontSize: 10, fontWeight: 700, padding: "1px 6px" }}>
+                          {selectedClient.sector || "General Sector"}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: "#94a3b8", marginTop: 2 }}>
+                        Client Record ID: <strong style={{ color: "#e2e8f0" }}>#{selectedClient.id}</strong> · Committed Projects: <strong style={{ color: "#38bdf8" }}>{getClientProjects(selectedClient).length}</strong>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn sec sm" onClick={() => startEditClient(selectedClient)}>
-                      ✏ Edit Details
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      className="btn sm"
+                      onClick={() => startEditClient(selectedClient)}
+                      style={{ background: "#3b82f6", color: "#fff", border: "none", fontWeight: 700, padding: "4px 10px", borderRadius: 6, fontSize: 10.5, cursor: "pointer" }}
+                    >
+                      ✏️ Edit Details
                     </button>
-                    <button className="btn sec sm" style={{ color: "var(--red)", borderColor: "var(--red)" }} onClick={() => handleDeleteClient(selectedClient.id)}>
-                      🗑 Delete Client
+                    <button
+                      className="btn sm"
+                      onClick={() => handleDeleteClient(selectedClient.id)}
+                      style={{ background: "#ef4444", color: "#fff", border: "none", fontWeight: 700, padding: "4px 10px", borderRadius: 6, fontSize: 10.5, cursor: "pointer" }}
+                    >
+                      🗑️ Delete
                     </button>
                   </div>
                 </div>
 
-                {/* Contact and Credentials Details Grid */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {/* Contact Info Card */}
-                  <div style={{ padding: 18, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600 }}>
-                      Contact Information
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, fontSize: 13 }}>
-                      <div>
-                        <div className="muted" style={{ fontSize: 11.5 }}>Email ID</div>
-                        <div style={{ fontWeight: 600, color: "var(--ink)", marginTop: 2, wordBreak: "break-all" }}>{selectedClient.email || selectedClient.contact || "—"}</div>
-                      </div>
-                      <div>
-                        <div className="muted" style={{ fontSize: 11.5 }}>Contact Number</div>
-                        <div style={{ fontWeight: 600, color: "var(--ink)", marginTop: 2 }}>{selectedClient.phone || "—"}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Assigned Project Manager Card */}
-                  <div style={{ padding: 18, background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span>👔</span> Assigned Project Manager / Staff Lead
-                    </div>
-                    {(() => {
-                      const pm = db.users.find(u => String(u.id) === String(selectedClient.projectManagerId) || String(u.uuid) === String(selectedClient.projectManagerId)) || getProjectManager();
-                      return (
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <Avatar name={pm.name} size={40} />
-                          <div>
-                            <div style={{ fontWeight: 700, color: "var(--ink)", fontSize: 14 }}>{pm.name}</div>
-                            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                              {pm.role || "Project Manager"} · <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{pm.discipline || "MEP"}</span>
-                            </div>
-                            {pm.email && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>✉ {pm.email}</div>}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Portal Credentials Card */}
-                  <div style={{ padding: 18, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600 }}>
-                      Client Portal Security Credentials
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, fontSize: 13 }}>
-                      <div>
-                        <div className="muted" style={{ fontSize: 11.5 }}>Username</div>
-                        <div style={{ fontWeight: 600, color: "var(--ink)", marginTop: 2 }}>{selectedClient.username || "—"}</div>
-                      </div>
-                      <div>
-                        <div className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
-                          Password
-                          <button
-                            onClick={() => setShowClientPassword(!showClientPassword)}
-                            style={{ border: "none", background: "none", color: "var(--accent2)", fontSize: 10, cursor: "pointer", fontWeight: 600 }}
-                          >
-                            {showClientPassword ? "Hide" : "Show"}
-                          </button>
-                        </div>
-                        <div style={{ fontWeight: 600, color: "var(--ink)", marginTop: 2 }}>
-                          {selectedClient.password ? (showClientPassword ? selectedClient.password : "••••••••") : "—"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Committed Projects */}
-                <div>
-                  <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600, marginBottom: 12 }}>
-                    Committed Projects ({getClientProjects(selectedClient).length})
-                  </div>
+                {/* 2-COLUMN SIDE-BY-SIDE FLEX CONTAINER */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "start" }}>
+                  
+                  {/* LEFT COLUMN: Contact Information & Security Credentials */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {getClientProjects(selectedClient).map(p => (
-                      <div
-                        key={p.id}
-                        onClick={() => {
-                          setSelProjectId(p.id);
-                          setSubTab("projects");
-                        }}
-                        style={{
-                          background: "var(--surface)",
-                          border: "1px solid var(--line)",
-                          borderRadius: 12,
-                          padding: "12px 18px",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          cursor: "pointer",
-                          transition: "all 0.2s"
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = "var(--accent2)";
-                          e.currentTarget.style.boxShadow = "0 2px 8px rgba(47, 93, 138, 0.05)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = "var(--line)";
-                          e.currentTarget.style.boxShadow = "none";
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700, color: "var(--ink)", fontSize: 14 }}>{p.name}</div>
-                          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
-                            Service: {p.category} · PM: <span style={{ fontWeight: 600, color: "var(--accent2)" }}>{getProjectManager(p.id).name}</span>
+                    {/* Contact Info Card */}
+                    <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11.5, color: "var(--ink)", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>🏢</span> Organization & Contact Details
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 10.5, color: "#64748b", fontWeight: 700 }}>Email Address</span>
+                          <span style={{ fontWeight: 800, fontSize: 11.5, color: selectedClient.email || selectedClient.contact ? "#2563eb" : "#94a3b8" }}>
+                            {selectedClient.email || selectedClient.contact || "Not specified"}
+                          </span>
+                        </div>
+
+                        <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 10.5, color: "#64748b", fontWeight: 700 }}>Contact Phone</span>
+                          <span style={{ fontWeight: 800, fontSize: 11.5, color: selectedClient.phone ? "#1e293b" : "#94a3b8" }}>
+                            {selectedClient.phone || "Not specified"}
+                          </span>
+                        </div>
+
+                        <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 10.5, color: "#64748b", fontWeight: 700 }}>Industry Sector</span>
+                          <span style={{ fontWeight: 800, fontSize: 11.5, color: "var(--ink)" }}>
+                            {selectedClient.sector || "Commercial"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Portal Security Credentials Card */}
+                    <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11.5, color: "var(--ink)", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>🔑</span> Portal Security Credentials
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                        <div style={{ padding: "6px 8px", background: "#f0f7ff", borderRadius: 8, border: "1px solid #bfdbfe" }}>
+                          <div style={{ fontSize: 9.5, color: "#1e40af", fontWeight: 700 }}>Username</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {selectedClient.username || "—"}
                           </div>
                         </div>
-                        <div style={{ textAlign: "right" }}>
-                          <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />
-                          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>
-                            Progress: {p.progress}%
+
+                        <div style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 9.5, color: "#64748b", fontWeight: 700 }}>Password</span>
+                            <button
+                              onClick={() => setShowClientPassword(!showClientPassword)}
+                              style={{ border: "none", background: "none", color: "#2563eb", fontSize: 9, cursor: "pointer", fontWeight: 800 }}
+                            >
+                              {showClientPassword ? "Hide" : "Show"}
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink)", marginTop: 2 }}>
+                            {selectedClient.password ? (showClientPassword ? selectedClient.password : "••••••••") : "—"}
                           </div>
                         </div>
                       </div>
-                    ))}
-                    {db.projects.filter(p => p.clientId === selectedClient.id).length === 0 && (
-                      <div className="empty" style={{ padding: 20 }}>
-                        No projects committed yet.
+                    </div>
+                  </div>
+
+                  {/* RIGHT COLUMN: PM Card & Committed Projects */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {/* Assigned PM Card */}
+                    <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11.5, color: "var(--ink)", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>👔</span> Assigned PM / Staff Lead
                       </div>
-                    )}
+
+                      {(() => {
+                        const pm = db.users.find(u => String(u.id) === String(selectedClient.projectManagerId) || String(u.uuid) === String(selectedClient.projectManagerId)) || getProjectManager();
+                        return (
+                          <div style={{ padding: "6px 8px", background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)", borderRadius: 10, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 8 }}>
+                            <Avatar name={pm.name} size={32} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 13 }}>{pm.name}</div>
+                              <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 1 }}>
+                                {pm.role || "Project Manager"} · <span style={{ color: "#2563eb", fontWeight: 700 }}>{pm.discipline || "MEP"}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Committed Projects Card */}
+                    <div className="card" style={{ padding: 12, background: "#fff", borderRadius: 12, border: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11.5, color: "var(--ink)", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>📁</span> Committed Projects ({getClientProjects(selectedClient).length})
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto", paddingRight: 2 }}>
+                        {getClientProjects(selectedClient).map(p => (
+                          <div
+                            key={p.id}
+                            onClick={() => {
+                              setSelProjectId(p.id);
+                              setSubTab("projects");
+                            }}
+                            style={{
+                              background: "#f8fafc",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: 8,
+                              padding: "6px 8px",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease"
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 800, color: "var(--ink)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                              <div style={{ fontSize: 10, color: "#64748b", marginTop: 1 }}>
+                                {p.category || "Engineering"}
+                              </div>
+                            </div>
+
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: "#2563eb" }}>{p.progress || 0}%</span>
+                              <Tag label={p.status} color={statusColor(p.status, db.settings.projectStatuses)} />
+                            </div>
+                          </div>
+                        ))}
+
+                        {getClientProjects(selectedClient).length === 0 && (
+                          <div style={{ padding: 12, textAlign: "center", border: "1px dashed #cbd5e1", borderRadius: 8, background: "#f8fafc" }}>
+                            <div style={{ fontWeight: 700, fontSize: 11, color: "var(--ink)" }}>No projects committed yet</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1403,6 +1606,104 @@ export default function Admin({
                 style={{ background: "var(--accent)", color: "#fff" }}
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DOCUMENT PREVIEW MODAL FOR ADMIN */}
+      {previewDoc && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: 20
+        }}>
+          <div className="card" style={{
+            width: "100%",
+            maxWidth: 480,
+            background: "#fff",
+            borderRadius: 16,
+            padding: 22,
+            boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800 }}>
+                  📄
+                </div>
+                <div>
+                  <h3 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--ink)" }}>
+                    Document Viewer
+                  </h3>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>Official Compliance Record</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setPreviewDoc(null)}
+                style={{ background: "none", border: "none", fontSize: 18, color: "var(--muted)", cursor: "pointer", fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ padding: "10px 12px", background: "var(--surface)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                <div style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 700, textTransform: "uppercase" }}>Document Title</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", marginTop: 2 }}>{previewDoc.documentName}</div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ padding: "10px 12px", background: "var(--surface)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                  <div style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 700 }}>Compliance Status</div>
+                  <div style={{ marginTop: 4 }}>
+                    <Tag label={previewDoc.status || "Pending"} color={previewDoc.status === "Approved" ? "#22c55e" : previewDoc.status === "Rejected" ? "#ef4444" : "#f59e0b"} />
+                  </div>
+                </div>
+
+                <div style={{ padding: "10px 12px", background: "var(--surface)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                  <div style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 700 }}>Attached File</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, color: previewDoc.fileName ? "#2563eb" : "#94a3b8", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {previewDoc.fileName ? `📎 ${previewDoc.fileName}` : "No file attached"}
+                  </div>
+                </div>
+              </div>
+
+              {previewDoc.fileName ? (
+                <div style={{ padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, textAlign: "center" }}>
+                  <div style={{ fontSize: 11.5, color: "#166534", fontWeight: 700, marginBottom: 8 }}>✓ Document file is ready</div>
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      window.open(`/uploads/${previewDoc.fileName}`, '_blank');
+                    }}
+                    style={{ background: "#16a34a", color: "#fff", fontWeight: 700, padding: "6px 14px", borderRadius: 6, fontSize: 11 }}
+                  >
+                    👁️ Open Document File
+                  </button>
+                </div>
+              ) : (
+                <div style={{ padding: 12, background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 10, textAlign: "center", color: "#64748b", fontSize: 11.5, fontStyle: "italic" }}>
+                  No file attachment uploaded yet for this document requirement.
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+              <button className="btn sec sm" onClick={() => setPreviewDoc(null)} style={{ padding: "5px 14px", fontWeight: 700, fontSize: 11 }}>
+                Close
               </button>
             </div>
           </div>

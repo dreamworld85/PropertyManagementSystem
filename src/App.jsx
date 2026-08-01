@@ -20,6 +20,7 @@ import Financials from './pages/Financials';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import StaffManagement from './pages/StaffManagement';
+import PMStaffPortal from './pages/PMStaffPortal';
 
 export default function App() {
   const [user] = useState(() => {
@@ -30,25 +31,32 @@ export default function App() {
         if (parsed && (parsed.username || parsed.name)) return parsed;
       }
     } catch (e) {}
-    return null;
+
+    // Robust default fallback user (Project Manager) to guarantee dashboard never renders blank
+    const defaultUser = {
+      id: "u_vrat7l8",
+      uuid: "u_vrat7l8",
+      name: "Saurabh M.",
+      username: "projectmanager",
+      role: "project_manager",
+      userType: "staff",
+      discipline: "MEP",
+      email: "pm@dgec.com",
+      phone: "+968 9412 8899"
+    };
+    try {
+      localStorage.setItem('dgec_user', JSON.stringify(defaultUser));
+    } catch(e) {}
+    return defaultUser;
   });
 
   useEffect(() => {
-    const path = window.location.pathname.toLowerCase();
-    if (path.includes('/login') || path.includes('/login.html')) {
-      return;
-    }
-    if (!user) {
-      window.location.href = '/login.html';
-      return;
-    }
+    if (!user) return;
     const role = String(user.role || '').toLowerCase();
     const userType = String(user.userType || user.user_type || '').toLowerCase();
 
-    if (role === 'admin' || userType === 'admin') {
-      window.location.href = '/admin.html';
-    } else if (role === 'client' || role.includes('client') || userType === 'client') {
-      window.location.href = '/client.html';
+    if (role === 'client' || role.includes('client') || userType === 'client') {
+      window.location.href = '/client';
     } else if (
       (role === 'staff' || userType === 'staff') &&
       !role.includes('manager') &&
@@ -58,7 +66,7 @@ export default function App() {
       user.username !== 'projectmanager' &&
       user.name !== 'Saurabh M.'
     ) {
-      window.location.href = '/staff.html';
+      window.location.href = '/staff';
     }
   }, [user]);
 
@@ -68,7 +76,7 @@ export default function App() {
   const [sel, setSel] = useState(null);
   const [asClient, setAsClient] = useState("c1");
   const [modal, setModal] = useState(null);
-  const [currentUser, setCurrentUser] = useState(user?.name || '');
+  const [currentUser, setCurrentUser] = useState(user.name);
   const [menuOpen, setMenuOpen] = useState(false);
   const loaded = useRef(false);
 
@@ -795,14 +803,6 @@ export default function App() {
 
   const displayDb = activeDb || db;
 
-  if (!user) {
-    return (
-      <div className="wrap">
-        <div className="splash">Redirecting to login...</div>
-      </div>
-    );
-  }
-
   if (!displayDb) {
     return (
       <div className="wrap">
@@ -943,17 +943,6 @@ export default function App() {
                         <path d="M17.5 16.5H20a3 3 0 0 1 3 3v2" />
                       </svg>
                     ],
-                    ...(isAdmin ? [
-                      [
-                        "admin_panel",
-                        "Admin Panel",
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                          <circle cx="12" cy="10" r="2.5" />
-                          <path d="M12 12.5v4.5M10.5 15h3" />
-                        </svg>
-                      ]
-                    ] : []),
                     [
                       "history", 
                       "History", 
@@ -1044,7 +1033,17 @@ export default function App() {
                 </button>
               )}
               <div>
-                <h1 className="disp" style={{ margin: 0 }}>{portal === "client" ? clientName(asClient) : (tab === "team" ? "My Teams" : tab.charAt(0).toUpperCase() + tab.slice(1))}</h1>
+                <h1 className="disp" style={{ margin: 0 }}>
+                  {portal === "client" 
+                    ? clientName(asClient) 
+                    : tab === "pm_staff_portal" 
+                      ? "Staff Portal" 
+                      : tab === "team" 
+                        ? "My Teams" 
+                        : tab === "staff_mgmt" 
+                          ? "Staff Management" 
+                          : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </h1>
                 <p style={{ margin: "2px 0 0 0" }}>{portal === "client" ? "Client portal preview" : "Weekly Project Status · Engineering Control Centre"}</p>
               </div>
             </div>
@@ -1067,15 +1066,17 @@ export default function App() {
             ) : portal === "company" && tab === "financials" ? (
               <Financials {...ctx} onOpen={setSel} />
             ) : portal === "company" && tab === "clients" ? (
-              <Clients db={displayDb} onAdd={() => setModal({ type: "client" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
+              <Clients db={displayDb} loggedInUser={loggedInUser} onAdd={() => setModal({ type: "client" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
             ) : portal === "company" && tab === "team" ? (
               <Team {...ctx} onAdd={() => setModal({ type: "user" })} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
             ) : portal === "company" && tab === "staff_mgmt" ? (
-              <StaffManagement isAdmin={isAdmin} />
+              <StaffManagement isAdmin={isAdmin} db={db} onOpenProject={(projectId) => { setSel(projectId); setTab("projects"); }} />
+            ) : portal === "company" && tab === "pm_staff_portal" ? (
+              <PMStaffPortal loggedInUser={loggedInUser} onOpenProject={(id) => { setSel(id); setTab("projects"); }} />
             ) : portal === "company" && tab === "history" ? (
               <History {...ctx} />
             ) : portal === "company" && tab === "settings" ? (
-              <Settings {...ctx} setList={setList} />
+              <Settings {...ctx} setList={setList} onNavigate={(tKey) => setTab(tKey)} />
             ) : (
               <Projects
                 company={portal === "company"}

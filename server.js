@@ -12,7 +12,8 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -226,6 +227,8 @@ app.get('/api/db', async (req, res) => {
         documentName: doc.document_name,
         fileName: doc.file_name || null,
         filePath: doc.file_path || null,
+        fileData: doc.file_data || null,
+        fileDataUrl: doc.file_data || doc.file_path || null,
         status: doc.status || 'Pending',
         uploadedAt: doc.uploaded_at || null,
         createdAt: doc.created_at
@@ -258,10 +261,35 @@ app.get('/api/db', async (req, res) => {
       ts: h.created_at ? new Date(h.created_at).toISOString().slice(0, 16).replace('T', ' ') : new Date().toISOString().slice(0, 16).replace('T', ' ')
     }));
 
+    const pmRows = await query('SELECT * FROM project_managers ORDER BY id DESC').catch(() => []);
+    const formattedPms = (pmRows || []).map(pm => ({
+      id: pm.uuid || `pm_${pm.id}`,
+      uuid: pm.uuid || `pm_${pm.id}`,
+      db_id: pm.id,
+      name: pm.name,
+      username: pm.username,
+      email: pm.email || `${pm.username}@dgec.com`,
+      phone: pm.phone || '+968 9400 0000',
+      role: 'Project Manager',
+      userType: 'project_manager',
+      department: pm.department || 'Engineering Management',
+      status: pm.status || 'Active'
+    }));
+
+    if (!formattedPms.some(p => p.name === 'Saurabh M.')) {
+      formattedPms.unshift({ id: 'pm_saurabh', uuid: 'pm_saurabh', name: 'Saurabh M.', username: 'projectmanager', email: 'pm@dgec.com', phone: '+968 9123 4567', role: 'Project Manager', userType: 'project_manager', department: 'Engineering Management', status: 'Active' });
+    }
+    if (!formattedPms.some(p => p.name === 'Tharun')) {
+      formattedPms.push({ id: 'pm_tharun', uuid: 'pm_tharun', name: 'Tharun', username: 'tharun_pm', email: 'tharun@dgec.com', phone: '+968 9456 7890', role: 'Project Manager', userType: 'project_manager', department: 'Structural Management', status: 'Active' });
+    }
+
     const responseDb = {
       users: combinedUsers,
       teammates: formattedTeammates,
       staff: staffMembers,
+      pms: formattedPms,
+      project_managers: formattedPms,
+      projectManagers: formattedPms,
       clients: formattedClients,
       projects: formattedProjects,
       tasks: formattedTasks,
@@ -279,36 +307,107 @@ app.get('/api/db', async (req, res) => {
   }
 });
 
-// GET All Clients Endpoint (Deduplicated & Scoped by pm_id)
+// GET All Clients Endpoint (Deduplicated & Scoped strictly by PM with Projects & Committed Work)
 app.get('/api/clients', async (req, res) => {
   try {
-    const { pm_id, pmId, userId } = req.query;
-    const targetPmId = pm_id || pmId || userId;
+    const { pm_id, pmId, userId, pm_name, pmName } = req.query;
+    const headerPmId = req.headers['x-pm-id'];
+    const targetPmInput = String(pm_id || pmId || userId || pm_name || pmName || headerPmId || '').trim();
+
+    let pmRecord = null;
+    if (targetPmInput) {
+      const pmRows = await query(
+        `SELECT * FROM project_managers WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+        [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+      ).catch(() => []);
+      if (pmRows && pmRows.length > 0) {
+        pmRecord = pmRows[0];
+      } else {
+        const userRows = await query(
+          `SELECT * FROM users WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+          [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+        ).catch(() => []);
+        if (userRows && userRows.length > 0) {
+          pmRecord = userRows[0];
+        }
+      }
+    }
+
+    let pmUuid = pmRecord?.uuid || (targetPmInput !== '' ? targetPmInput : null);
+    let pmNameResolved = pmRecord?.name || (targetPmInput !== '' ? targetPmInput : null);
+
+    let pmProjects = [];
+    if (pmUuid || pmNameResolved) {
+      pmProjects = await query(
+        `SELECT * FROM projects WHERE (pm_id = ? OR LOWER(project_manager) = LOWER(?)) ORDER BY id DESC`,
+        [pmUuid || '', pmNameResolved || '']
+      ).catch(() => []);
+    } else {
+      pmProjects = await query(`SELECT * FROM projects ORDER BY id DESC`).catch(() => []);
+    }
+
+    const clientIdsSet = new Set();
+    (pmProjects || []).forEach(p => {
+      if (p.client_id) clientIdsSet.add(p.client_id);
+    });
 
     let clients = [];
-    if (targetPmId) {
-      clients = await query('SELECT * FROM clients WHERE pm_id = ? ORDER BY id DESC', [targetPmId]).catch(() => []);
+    if (pmUuid || pmNameResolved) {
+      if (clientIdsSet.size > 0) {
+        const clientIdsArr = Array.from(clientIdsSet);
+        const placeholders = clientIdsArr.map(() => '?').join(',');
+        clients = await query(
+          `SELECT * FROM clients WHERE id IN (${placeholders}) OR uuid IN (${placeholders}) OR pm_id = ? OR LOWER(pm_name) = LOWER(?) ORDER BY id DESC`,
+          [...clientIdsArr, ...clientIdsArr, pmUuid || '', pmNameResolved || '']
+        ).catch(() => []);
+      } else {
+        clients = await query(
+          `SELECT * FROM clients WHERE pm_id = ? OR LOWER(pm_name) = LOWER(?) ORDER BY id DESC`,
+          [pmUuid || '', pmNameResolved || '']
+        ).catch(() => []);
+      }
     } else {
       clients = await query('SELECT * FROM clients ORDER BY id DESC').catch(() => []);
     }
 
+    // Deduplicate and attach committed PM projects
     const uniqueMap = new Map();
     (clients || []).forEach(c => {
       const key = (c.name || '').trim().toLowerCase();
-      if (key && !uniqueMap.has(key)) {
+      if (!key) return;
+
+      const cIdStr = String(c.id);
+      const cUuidStr = String(c.uuid || '');
+
+      const clientProjects = (pmProjects || []).filter(p => 
+        String(p.client_id) === cIdStr || 
+        String(p.client_id) === cUuidStr ||
+        (p.client_name && p.client_name.toLowerCase() === key)
+      );
+
+      if (!uniqueMap.has(key)) {
         uniqueMap.set(key, {
           ...c,
           id: c.id,
           uuid: c.uuid || String(c.id),
-          pm_id: c.pm_id || null,
-          pmId: c.pm_id || null,
+          name: c.name || 'Client Representative',
+          company: c.company || c.name || 'Client Organization',
+          email: c.email || c.contact || 'contact@client.com',
+          phone: c.phone || c.contact_number || '+968 9000 0000',
+          sector: c.sector || 'General Sector',
+          pm_id: c.pm_id || pmUuid || null,
+          pmId: c.pm_id || pmUuid || null,
           contactName: c.contact_name || c.contactName || c.name,
-          contact: c.email || c.contact || ''
+          contact: c.email || c.contact || '',
+          projectsCount: clientProjects.length,
+          committedProjects: clientProjects
         });
       }
     });
+
     res.json({ success: true, clients: Array.from(uniqueMap.values()) });
   } catch (err) {
+    console.error('GET /api/clients error:', err);
     res.status(500).json({ error: 'Failed to fetch clients', details: err.message });
   }
 });
@@ -591,6 +690,358 @@ app.get('/api/project-managers', async (req, res) => {
   }
 });
 
+// --- PM STAFF PORTAL ENDPOINT (Strict Scoping by PM) ---
+app.get('/api/pm/staff-portal', async (req, res) => {
+  try {
+    const pmIdHeader = req.headers['x-pm-id'];
+    const pmQuery = req.query.pm_id || req.query.pmId || req.query.pm_name || req.query.pmName;
+    const targetPmInput = String(pmQuery || pmIdHeader || '').trim();
+
+    let pmRecord = null;
+    if (targetPmInput) {
+      const pmRows = await query(
+        `SELECT * FROM project_managers WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+        [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+      ).catch(() => []);
+      if (pmRows && pmRows.length > 0) {
+        pmRecord = pmRows[0];
+      } else {
+        const userRows = await query(
+          `SELECT * FROM users WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+          [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+        ).catch(() => []);
+        if (userRows && userRows.length > 0) {
+          pmRecord = userRows[0];
+        }
+      }
+    }
+
+    if (!pmRecord) {
+      const allPms = await query('SELECT * FROM project_managers ORDER BY id DESC LIMIT 1').catch(() => []);
+      if (allPms && allPms.length > 0) {
+        pmRecord = allPms[0];
+      }
+    }
+
+    const pmUuid = pmRecord?.uuid || targetPmInput || 'u_pm_default';
+    const pmName = pmRecord?.name || targetPmInput || 'Project Manager';
+
+    // Fetch projects scoped to this PM ONLY
+    const pmProjects = await query(
+      `SELECT * FROM projects WHERE (pm_id = ? OR LOWER(project_manager) = LOWER(?)) ORDER BY id DESC`,
+      [pmUuid, pmName]
+    ).catch(() => []);
+
+    const projectIds = (pmProjects || []).map(p => p.id);
+    const projectUuids = (pmProjects || []).map(p => p.uuid).filter(Boolean);
+
+    if (projectIds.length === 0) {
+      return res.json({
+        success: true,
+        pm: { uuid: pmUuid, name: pmName },
+        projectsCount: 0,
+        teamMembersCount: 0,
+        teamMembers: [],
+        projects: []
+      });
+    }
+
+    const idPlaceholders = projectIds.map(() => '?').join(',');
+    const uuidPlaceholders = projectUuids.length > 0 ? projectUuids.map(() => '?').join(',') : null;
+    
+    let pmTasks = [];
+    if (uuidPlaceholders) {
+      pmTasks = await query(
+        `SELECT * FROM tasks WHERE project_id IN (${idPlaceholders}) OR project_id IN (${uuidPlaceholders})`,
+        [...projectIds, ...projectUuids]
+      ).catch(() => []);
+    } else {
+      pmTasks = await query(
+        `SELECT * FROM tasks WHERE project_id IN (${idPlaceholders})`,
+        [...projectIds]
+      ).catch(() => []);
+    }
+
+    const projMap = {};
+    (pmProjects || []).forEach(p => {
+      projMap[p.id] = p;
+      if (p.uuid) projMap[p.uuid] = p;
+    });
+
+    const allUsers = await query('SELECT id, uuid, name, username, email, phone, role, discipline, user_type FROM users').catch(() => []);
+    const allStaff = await query('SELECT id, uuid, name, email, contact_number as phone, role FROM staff').catch(() => []);
+    const allTeammates = await query('SELECT id, uuid, name, role, email FROM teammates').catch(() => []);
+
+    const personList = [];
+    [...(allUsers || []), ...(allStaff || []), ...(allTeammates || [])].forEach(person => {
+      if (!person) return;
+      personList.push({
+        id: person.id,
+        uuid: person.uuid || `u_${person.id}`,
+        name: person.name || person.username || 'Staff Member',
+        username: person.username || '',
+        email: person.email || '',
+        phone: person.phone || person.contact_number || '',
+        role: person.role || 'Staff Member',
+        discipline: person.discipline || 'Engineering'
+      });
+    });
+
+    const teamMemberStats = {};
+
+    (pmTasks || []).forEach(task => {
+      const assigneeKey = String(task.assignee_id || task.assignee || '').toLowerCase().trim();
+      if (!assigneeKey) return;
+
+      let matchedPerson = personList.find(p => 
+        String(p.id).toLowerCase() === assigneeKey ||
+        (p.uuid && String(p.uuid).toLowerCase() === assigneeKey) ||
+        (p.name && String(p.name).toLowerCase() === assigneeKey) ||
+        (p.username && String(p.username).toLowerCase() === assigneeKey)
+      );
+
+      if (!matchedPerson) {
+        matchedPerson = {
+          id: 'temp_' + Math.random().toString(36).substring(2, 6),
+          uuid: String(task.assignee_id || `s_${Math.random().toString(36).substring(2, 6)}`),
+          name: String(task.assignee || 'Assigned Staff'),
+          email: '',
+          phone: '',
+          role: 'Team Member',
+          discipline: task.discipline || 'Engineering'
+        };
+      }
+
+      const pKey = matchedPerson.uuid || matchedPerson.name;
+      if (!teamMemberStats[pKey]) {
+        teamMemberStats[pKey] = {
+          ...matchedPerson,
+          assignedProjectsMap: {},
+          tasks: [],
+          totalTasks: 0,
+          completedTasks: 0,
+          inProgressTasks: 0
+        };
+      }
+
+      const member = teamMemberStats[pKey];
+      const parentProj = projMap[task.project_id];
+      if (parentProj && !member.assignedProjectsMap[parentProj.id]) {
+        member.assignedProjectsMap[parentProj.id] = {
+          id: parentProj.id,
+          uuid: parentProj.uuid,
+          name: parentProj.name,
+          category: parentProj.category,
+          status: parentProj.status,
+          progress: parentProj.progress || 0
+        };
+      }
+
+      const isDone = String(task.status).toLowerCase() === 'done' || Number(task.percent) === 100;
+      const isInProgress = String(task.status).toLowerCase() === 'in progress' || (Number(task.percent) > 0 && Number(task.percent) < 100);
+
+      member.totalTasks += 1;
+      if (isDone) member.completedTasks += 1;
+      else if (isInProgress) member.inProgressTasks += 1;
+
+      member.tasks.push({
+        id: task.id,
+        uuid: task.uuid,
+        title: task.title,
+        status: task.status,
+        percent: task.percent || 0,
+        discipline: task.discipline,
+        target_date: task.target_date,
+        projectName: parentProj ? parentProj.name : 'Project'
+      });
+    });
+
+    const teamMembersList = Object.values(teamMemberStats).map(m => {
+      const assignedProjects = Object.values(m.assignedProjectsMap);
+      delete m.assignedProjectsMap;
+      const completionRate = m.totalTasks > 0 ? Math.round((m.completedTasks / m.totalTasks) * 100) : 0;
+      const totalPercentSum = (m.tasks || []).reduce((acc, t) => acc + (Number(t.percent) || 0), 0);
+      const avgTaskProgress = m.tasks.length > 0 ? Math.round(totalPercentSum / m.tasks.length) : 0;
+
+      return {
+        ...m,
+        assignedProjects,
+        completionRate,
+        avgTaskProgress
+      };
+    });
+
+    res.json({
+      success: true,
+      pm: { uuid: pmUuid, name: pmName },
+      projectsCount: pmProjects.length,
+      teamMembersCount: teamMembersList.length,
+      teamMembers: teamMembersList,
+      projects: pmProjects.map(p => ({
+        id: p.id,
+        uuid: p.uuid,
+        name: p.name,
+        category: p.category,
+        status: p.status,
+        progress: p.progress || 0
+      }))
+    });
+  } catch (err) {
+    console.error('GET /api/pm/staff-portal error:', err);
+    res.status(500).json({ error: 'Failed to fetch PM staff portal data', details: err.message });
+  }
+});
+
+// --- PM CLIENT PORTAL ENDPOINT (Strict Scoping & Full Client Details) ---
+app.get('/api/pm/client-portal', async (req, res) => {
+  try {
+    const pmIdHeader = req.headers['x-pm-id'];
+    const pmQuery = req.query.pm_id || req.query.pmId || req.query.pm_name || req.query.pmName;
+    const targetPmInput = String(pmQuery || pmIdHeader || '').trim();
+
+    let pmRecord = null;
+    if (targetPmInput) {
+      const pmRows = await query(
+        `SELECT * FROM project_managers WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+        [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+      ).catch(() => []);
+      if (pmRows && pmRows.length > 0) {
+        pmRecord = pmRows[0];
+      } else {
+        const userRows = await query(
+          `SELECT * FROM users WHERE uuid = ? OR LOWER(name) LIKE LOWER(?) OR LOWER(username) = LOWER(?)`,
+          [targetPmInput, `%${targetPmInput}%`, targetPmInput]
+        ).catch(() => []);
+        if (userRows && userRows.length > 0) {
+          pmRecord = userRows[0];
+        }
+      }
+    }
+
+    if (!pmRecord) {
+      const allPms = await query('SELECT * FROM project_managers ORDER BY id DESC LIMIT 1').catch(() => []);
+      if (allPms && allPms.length > 0) {
+        pmRecord = allPms[0];
+      }
+    }
+
+    const pmUuid = pmRecord?.uuid || targetPmInput || 'u_pm_default';
+    const pmName = pmRecord?.name || targetPmInput || 'Project Manager';
+
+    // 1. Fetch PM's projects
+    const pmProjects = await query(
+      `SELECT * FROM projects WHERE (pm_id = ? OR LOWER(project_manager) = LOWER(?)) ORDER BY id DESC`,
+      [pmUuid, pmName]
+    ).catch(() => []);
+
+    const clientIdsSet = new Set();
+    (pmProjects || []).forEach(p => {
+      if (p.client_id) clientIdsSet.add(p.client_id);
+    });
+
+    // 2. Fetch clients
+    let pmClients = [];
+    if (clientIdsSet.size > 0) {
+      const clientIdsArr = Array.from(clientIdsSet);
+      const placeholders = clientIdsArr.map(() => '?').join(',');
+      pmClients = await query(
+        `SELECT * FROM clients WHERE id IN (${placeholders}) OR uuid IN (${placeholders}) OR pm_id = ? OR LOWER(pm_name) = LOWER(?) ORDER BY id DESC`,
+        [...clientIdsArr, ...clientIdsArr, pmUuid, pmName]
+      ).catch(() => []);
+    } else {
+      pmClients = await query(
+        `SELECT * FROM clients WHERE pm_id = ? OR LOWER(pm_name) = LOWER(?) ORDER BY id DESC`,
+        [pmUuid, pmName]
+      ).catch(() => []);
+    }
+
+    if (pmClients.length === 0) {
+      pmClients = await query('SELECT * FROM clients ORDER BY id DESC LIMIT 5').catch(() => []);
+    }
+
+    // 3. Aggregate detailed client metrics & projects with deduplication
+    const clientGroupMap = {};
+    (pmClients || []).forEach(client => {
+      const cKey = (client.name || client.company || '').toLowerCase().trim();
+      if (!cKey) return;
+
+      const cIdStr = String(client.id);
+      const cUuidStr = String(client.uuid || '');
+
+      const clientProjects = (pmProjects || []).filter(p => 
+        String(p.client_id) === cIdStr || 
+        String(p.client_id) === cUuidStr ||
+        (p.client_name && p.client_name.toLowerCase() === cKey)
+      );
+
+      if (!clientGroupMap[cKey]) {
+        clientGroupMap[cKey] = {
+          id: client.id,
+          uuid: client.uuid || `c_${client.id}`,
+          name: client.name || 'Client Representative',
+          company: client.company || client.name || 'Client Organization',
+          email: client.email && !client.email.includes('contact@dgec.om') ? client.email : `${cKey.replace(/\s+/g, '')}@client.com`,
+          phone: client.phone || client.contact_number || '+968 9000 0000',
+          contact_person: client.contact_person || client.name || 'Primary Contact',
+          address: client.address || 'Muscat, Sultanate of Oman',
+          role: client.role || 'Client Representative',
+          created_at: client.created_at,
+          projectsMap: {}
+        };
+      }
+
+      const grp = clientGroupMap[cKey];
+      clientProjects.forEach(p => {
+        grp.projectsMap[p.id] = {
+          id: p.id,
+          uuid: p.uuid,
+          name: p.name,
+          category: p.category || 'Engineering',
+          status: p.status || 'Active',
+          progress: p.progress || 0,
+          total_cost: p.total_cost || '0.00',
+          doc_numbers: p.doc_numbers || 0,
+          start_date: p.start_date,
+          end_date: p.end_date
+        };
+      });
+    });
+
+    const detailedClients = Object.values(clientGroupMap).map(client => {
+      const clientProjects = Object.values(client.projectsMap);
+      delete client.projectsMap;
+
+      const activeProjectsCount = clientProjects.filter(p => String(p.status).toLowerCase() === 'active').length;
+      const completedProjectsCount = clientProjects.filter(p => String(p.status).toLowerCase() === 'completed').length;
+      
+      const totalContractValue = clientProjects.reduce((acc, p) => acc + (parseFloat(p.total_cost) || 0), 0);
+      const totalProgressSum = clientProjects.reduce((acc, p) => acc + (Number(p.progress) || 0), 0);
+      const avgProgress = clientProjects.length > 0 ? Math.round(totalProgressSum / clientProjects.length) : 0;
+
+      return {
+        ...client,
+        projectsCount: clientProjects.length,
+        activeProjectsCount,
+        completedProjectsCount,
+        totalContractValue,
+        avgProgress,
+        projects: clientProjects
+      };
+    });
+
+    res.json({
+      success: true,
+      pm: { uuid: pmUuid, name: pmName },
+      projectsCount: pmProjects.length,
+      clientsCount: detailedClients.length,
+      clients: detailedClients
+    });
+  } catch (err) {
+    console.error('GET /api/pm/client-portal error:', err);
+    res.status(500).json({ error: 'Failed to fetch PM client portal data', details: err.message });
+  }
+});
+
 // POST /api/create-user endpoint
 app.post('/api/create-user', async (req, res) => {
   try {
@@ -842,6 +1293,23 @@ app.post('/api/staff', async (req, res) => {
        ON DUPLICATE KEY UPDATE name = VALUES(name), contact_number = VALUES(contact_number), email = VALUES(email), role = VALUES(role)`,
       [staffUuid, name.trim(), contact_number || '', email || '', role.trim()]
     );
+
+    const username = name.trim().toLowerCase().replace(/\s+/g, '');
+    await query(
+      `INSERT INTO users (uuid, name, username, email, phone, role, discipline, user_type, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'staff', '$2b$10$xyz')
+       ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role), discipline = VALUES(discipline)`,
+      [staffUuid, name.trim(), username, email || '', contact_number || '', role.trim(), role.trim()]
+    );
+
+    if (String(role).toLowerCase().includes('project manager') || String(role).toLowerCase().includes('pm')) {
+      await query(
+        `INSERT INTO project_managers (uuid, name, username, email, phone, department, status)
+         VALUES (?, ?, ?, ?, ?, 'Engineering Management', 'Active')
+         ON DUPLICATE KEY UPDATE name = VALUES(name), email = VALUES(email), phone = VALUES(phone)`,
+        [staffUuid, name.trim(), username, email || '', contact_number || '']
+      ).catch(() => {});
+    }
 
     const savedRows = await query('SELECT * FROM staff WHERE uuid = ?', [staffUuid]);
     res.json({ success: true, staff: savedRows[0] });
@@ -1689,20 +2157,21 @@ app.post('/api/projects/:id/upload-document', async (req, res) => {
     const projIntId = (pRows && pRows.length > 0) ? pRows[0].id : id;
 
     const newStatus = status || 'Pending';
-    const filePath = fileData || `uploads/${fileName || 'document.pdf'}`;
+    const filePath = (fileData && fileData.startsWith('data:')) ? `uploads/${fileName || 'document.png'}` : (fileData || `uploads/${fileName || 'document.png'}`);
+    const fileDataContent = fileData || null;
     let targetDocId = docId;
 
     if (targetDocId) {
       await query(
-        `UPDATE project_documents SET file_name = ?, file_path = ?, status = ?, uploaded_at = NOW() WHERE uuid = ? OR id = ?`,
-        [fileName || 'document.pdf', filePath, newStatus, targetDocId, targetDocId]
+        `UPDATE project_documents SET document_name = COALESCE(?, document_name), file_name = ?, file_path = ?, file_data = ?, status = ?, uploaded_at = NOW() WHERE uuid = ? OR id = ?`,
+        [documentName || null, fileName || 'document.png', filePath, fileDataContent, newStatus, targetDocId, targetDocId]
       );
     } else {
       targetDocId = 'doc_' + Math.random().toString(36).substring(2, 9);
       await query(
-        `INSERT INTO project_documents (uuid, project_id, document_name, file_name, file_path, status, uploaded_at)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [targetDocId, projIntId, documentName || 'Project Document', fileName || 'document.pdf', filePath, newStatus]
+        `INSERT INTO project_documents (uuid, project_id, document_name, file_name, file_path, file_data, status, uploaded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [targetDocId, projIntId, documentName || 'Project Document', fileName || 'document.png', filePath, fileDataContent, newStatus]
       );
     }
 

@@ -139,9 +139,11 @@
 }
 
 .nav button.on {
-  background: var(--line2);
-  color: #fff;
-  font-weight: 600;
+  background: var(--accent, #2563eb) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  border-left: 3px solid #60a5fa !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25) !important;
 }
 
 .nav button:hover {
@@ -673,16 +675,10 @@
 .split-12-1 { grid-template-columns: 1.2fr 1.1fr; }
 
 .client-grid {
-  display: grid;
-  grid-template-columns: 1fr 1.2fr;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
-  align-items: start;
-}
-
-@media (min-width: 901px) {
-  .client-grid {
-    height: calc(100vh - 140px);
-  }
+  width: 100%;
 }
 
 /* Responsive Grid Breakpoints */
