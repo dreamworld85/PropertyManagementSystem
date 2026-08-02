@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Avatar from '../components/Avatar';
 import Tag from '../components/Tag';
 
-export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
+export default function StaffManagement({ isAdmin, db = {}, onOpenProject, commit, updateUser }) {
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -29,12 +29,15 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
 
   const [formData, setFormData] = useState({
     name: '',
+    username: '',
+    password: '',
     contact_number: '',
     email: '',
-    role: 'Developer'
+    role: 'Senior Structural Engineer'
   });
 
   const availableRoles = [
+    'Project Manager',
     'Senior Structural Engineer',
     'Architect Lead',
     'MEP Lead',
@@ -87,13 +90,41 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
   };
 
   // Fetch staff list from backend API (MySQL prepared statements backend)
-  const fetchStaff = async () => {
+  const fetchStaff = async (showLoading = false) => {
     try {
-      setLoading(true);
+      if (showLoading || staffList.length === 0) setLoading(true);
       const res = await fetch('/api/staff');
       if (!res.ok) throw new Error('Failed to fetch staff directory from database');
       const data = await res.json();
-      setStaffList(data.staff || []);
+      
+      const apiStaff = data.staff || [];
+      const dbStaff = db.staff || [];
+      const dbUsers = (db.users || []).filter(u => {
+        const r = String(u.role || '').toLowerCase();
+        const ut = String(u.userType || u.user_type || '').toLowerCase();
+        return !r.includes('admin') && !ut.includes('admin') && !r.includes('client') && !ut.includes('client');
+      });
+
+      const combined = [...apiStaff];
+
+      [...dbStaff, ...dbUsers].forEach(item => {
+        if (!item.name) return;
+        const normName = item.name.trim().toLowerCase();
+        if (!combined.some(s => s.name && s.name.trim().toLowerCase() === normName)) {
+          combined.push({
+            id: item.id || item.uuid || `s_${Math.random()}`,
+            uuid: item.uuid || item.id,
+            name: item.name,
+            username: item.username || normName.replace(/\s+/g, ''),
+            contact_number: item.contact_number || item.phone || '+968 9412 8899',
+            email: item.email || `${normName.replace(/\s+/g, '')}@dgec.com`,
+            role: item.role || item.discipline || 'Engineering Staff',
+            created_at: item.created_at || new Date().toISOString()
+          });
+        }
+      });
+
+      setStaffList(combined);
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -103,12 +134,12 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
   };
 
   useEffect(() => {
-    fetchStaff();
-  }, []);
+    fetchStaff(staffList.length === 0);
+  }, [(db.staff || []).length, (db.users || []).length]);
 
   const openAddModal = () => {
     setEditingStaff(null);
-    setFormData({ name: '', contact_number: '', email: '', role: 'Senior Structural Engineer' });
+    setFormData({ name: '', username: '', password: '', contact_number: '', email: '', role: 'Senior Structural Engineer' });
     setIsModalOpen(true);
   };
 
@@ -116,6 +147,8 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
     setEditingStaff(member);
     setFormData({
       name: member.name || '',
+      username: member.username || member.name?.toLowerCase().replace(/\s+/g, '') || '',
+      password: '',
       contact_number: member.contact_number || '',
       email: member.email || '',
       role: member.role || 'Senior Structural Engineer'
@@ -139,6 +172,8 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
       const payload = {
         uuid: editingStaff ? editingStaff.uuid : undefined,
         name: formData.name.trim(),
+        username: formData.username.trim() || formData.name.trim().toLowerCase().replace(/\s+/g, ''),
+        password: formData.password.trim(),
         contact_number: formData.contact_number.trim(),
         email: formData.email.trim(),
         role: formData.role.trim()
@@ -155,6 +190,40 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
         throw new Error(errData.error || 'Failed to save staff member');
       }
 
+      const resData = await res.json();
+
+      if (commit) {
+        commit((d) => {
+          const nextStaff = [...(d.staff || [])];
+          const nextUsers = [...(d.users || [])];
+
+          const newStaffObj = {
+            id: resData.staff?.id || payload.uuid || ('s_' + Math.random().toString(36).substring(2, 9)),
+            uuid: resData.staff?.uuid || payload.uuid,
+            name: payload.name,
+            username: payload.username,
+            contact_number: payload.contact_number,
+            email: payload.email,
+            role: payload.role,
+            created_at: new Date().toISOString()
+          };
+
+          if (!nextStaff.some(s => String(s.name).toLowerCase() === payload.name.toLowerCase())) {
+            nextStaff.push(newStaffObj);
+          }
+          if (!nextUsers.some(u => String(u.name).toLowerCase() === payload.name.toLowerCase())) {
+            nextUsers.push({
+              ...newStaffObj,
+              user_type: 'staff',
+              userType: 'staff'
+            });
+          }
+
+          return { ...d, staff: nextStaff, users: nextUsers };
+        }, `Saved staff member ${payload.name}`);
+      }
+
+      alert(`✅ Staff member '${formData.name}' saved with username '${payload.username}'! They can now log into the Staff Panel.`);
       setIsModalOpen(false);
       fetchStaff();
     } catch (err) {
@@ -163,11 +232,16 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
   };
 
   const handleDelete = async (member) => {
-    if (!window.confirm(`Are you sure you want to delete staff member '${member.name}'?`)) return;
+    if (!window.confirm(`Are you sure you want to permanently delete '${member.name}'? This will delete all staff records, user logins, and task assignments entirely.`)) return;
     try {
-      const targetId = member.id || member.uuid;
-      const res = await fetch(`/api/staff/${targetId}`, { method: 'DELETE' });
+      const targetId = member.uuid || member.id;
+      const res = await fetch(`/api/staff/${targetId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: member.name })
+      });
       if (!res.ok) throw new Error('Failed to delete staff member');
+      setStaffList(prev => prev.filter(s => String(s.id) !== String(member.id) && String(s.uuid) !== String(member.uuid) && String(s.name).toLowerCase() !== String(member.name).toLowerCase()));
       fetchStaff();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -197,9 +271,14 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
       return (staffIdStr && assigneeStr === staffIdStr) || (staffNameStr && assigneeStr === staffNameStr);
     });
 
-    // Find committed projects for this staff member
+    // Find committed projects for this staff member or Project Manager
     const assignedProjectIds = new Set(memberTasks.map(t => String(t.projectId || t.project_id)));
-    const committedProjects = allProjects.filter(p => assignedProjectIds.has(String(p.id || p.uuid)));
+    const committedProjects = allProjects.filter(p => {
+      const pPmIdStr = String(p.pm_id || p.projectManagerId || '').toLowerCase();
+      const pPmNameStr = String(p.project_manager || p.pm_name || '').toLowerCase();
+      const isPmProject = (staffIdStr && pPmIdStr === staffIdStr) || (staffNameStr && pPmNameStr && pPmNameStr.includes(staffNameStr)) || (staffNameStr && pPmNameStr && staffNameStr.includes(pPmNameStr));
+      return assignedProjectIds.has(String(p.id || p.uuid)) || isPmProject;
+    });
 
     // Total metrics
     const totalTasksCount = memberTasks.length;
@@ -397,16 +476,6 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Back Button */}
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <button
-          className="btn sec sm"
-          onClick={() => window.history.length > 1 ? window.history.back() : null}
-          style={{ padding: '6px 14px', borderRadius: 8, fontWeight: 700, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', background: '#fff', border: '1px solid var(--line)' }}
-        >
-          ← Back
-        </button>
-      </div>
       {/* Header Banner */}
       <div className="card" style={{ padding: 24, background: '#fff', borderRadius: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
@@ -506,7 +575,7 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
           </p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 18 }}>
           {filteredStaff.map((staff) => (
             <div
               key={staff.id || staff.uuid}
@@ -703,6 +772,37 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
               <div className="row2">
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+                    Username for Login *
+                  </label>
+                  <input
+                    className="inp"
+                    type="text"
+                    required
+                    placeholder="e.g. boby_eng"
+                    value={formData.username}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+                    Password for Login *
+                  </label>
+                  <input
+                    className="inp"
+                    type="password"
+                    required={!editingStaff}
+                    placeholder={editingStaff ? "Leave blank to keep current" : "Set staff password"}
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              <div className="row2">
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
                     Contact Number *
                   </label>
                   <input
@@ -733,20 +833,23 @@ export default function StaffManagement({ isAdmin, db = {}, onOpenProject }) {
 
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
-                  Role in the Company *
+                  Role in the Company (Type custom role or select below) *
                 </label>
-                <select
+                <input
                   className="inp"
+                  type="text"
+                  list="staff-roles-options"
+                  required
+                  placeholder="e.g. Senior Structural Engineer, Lead Designer"
                   value={formData.role}
                   onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                   style={{ width: '100%' }}
-                >
+                />
+                <datalist id="staff-roles-options">
                   {availableRoles.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
+                    <option key={r} value={r} />
                   ))}
-                </select>
+                </datalist>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>

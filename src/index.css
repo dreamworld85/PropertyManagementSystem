@@ -209,7 +209,8 @@
 
 .main {
   flex: 1;
-  overflow: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
   max-height: 100vh;
 }
 
@@ -250,7 +251,7 @@
 }
 
 .content {
-  padding: 24px 28px;
+  padding: 20px;
 }
 
 .grid4 {

@@ -6,13 +6,30 @@ export default function AdminStaffPortal({ db = {}, onOpenProject }) {
   const [expandedMemberId, setExpandedMemberId] = useState(null);
 
   const users = db.users || [];
+  const staffRecords = db.staff || [];
   const projects = db.projects || [];
   const tasks = db.tasks || [];
 
+  const combinedUsers = [...users];
+  (staffRecords || []).forEach(s => {
+    if (s.name && !combinedUsers.some(u => String(u.name).toLowerCase() === String(s.name).toLowerCase())) {
+      combinedUsers.push({
+        id: s.id || s.uuid,
+        uuid: s.uuid || s.id,
+        name: s.name,
+        username: s.username || s.name.toLowerCase().replace(/\s+/g, ''),
+        role: s.role || 'Staff Member',
+        userType: 'staff',
+        email: s.email,
+        phone: s.contact_number || s.phone
+      });
+    }
+  });
+
   // Filter staff members (all non-client users or staff/engineer/PM roles)
-  const staffMembers = users.filter(u => {
+  const staffMembers = combinedUsers.filter(u => {
     const role = (u.role || '').toLowerCase();
-    const userType = (u.userType || '').toLowerCase();
+    const userType = (u.userType || u.user_type || '').toLowerCase();
     return role !== 'client' && userType !== 'client';
   });
 

@@ -16,7 +16,7 @@ function StaffPortal() {
   if (storedUser) {
     try {
       const parsed = JSON.parse(storedUser);
-      if (parsed && parsed.username) {
+      if (parsed && (parsed.username || parsed.name || parsed.id || parsed.uuid)) {
         sessionUser = parsed;
       }
     } catch (e) {}
@@ -97,24 +97,36 @@ function StaffPortal() {
 
   // Find active staff member (forcing staff role only)
   let activeStaff = null;
-  if (db && sessionUser && sessionUser.username) {
-    const matched = db.users.find(u => 
-      String(u.id) === String(sessionUser.id) || 
-      String(u.uuid) === String(sessionUser.id) || 
-      u.username === sessionUser.username
-    );
+  if (db && sessionUser) {
+    const sId = String(sessionUser.id || sessionUser.uuid || '').toLowerCase();
+    const sName = String(sessionUser.name || '').toLowerCase();
+    const sUser = String(sessionUser.username || '').toLowerCase();
+
+    const matched = (db.users || []).find(u => {
+      const uId = String(u.id || '').toLowerCase();
+      const uUuid = String(u.uuid || '').toLowerCase();
+      const uName = String(u.name || '').toLowerCase();
+      const uUser = String(u.username || '').toLowerCase();
+      return (sId && (uId === sId || uUuid === sId)) || (sUser && uUser === sUser) || (sName && uName === sName);
+    });
+
     if (matched && !matched.role?.toLowerCase().includes("admin") && !matched.role?.toLowerCase().includes("project manager")) {
       activeStaff = matched;
     }
   }
 
-  const user = activeStaff || johnUser;
+  const user = activeStaff || sessionUser || johnUser;
 
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileEmail, setProfileEmail] = useState("");
   const [profilePhone, setProfilePhone] = useState("");
   const [profileUsername, setProfileUsername] = useState("");
   const [profilePassword, setProfilePassword] = useState("");
+
+  const [taskSearch, setTaskSearch] = useState('');
+  const [taskStatusFilter, setTaskStatusFilter] = useState('All');
+  const [taskProjectFilter, setTaskProjectFilter] = useState('All');
+  const [saveNotification, setSaveNotification] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -133,20 +145,108 @@ function StaffPortal() {
     );
   }
 
-  // Filter tasks for the active staff member
-  const userTasks = db.tasks.filter(t => 
-    String(t.assignee) === String(user.id) || 
-    String(t.assignee) === String(user.uuid) || 
-    (user.name === "John Doe" && (t.assignee === "u7" || t.assignee === "7"))
-  );
+  // Robust keys array for active staff member matching
+  const userKeys = [
+    user.id ? String(user.id).toLowerCase() : null,
+    user.uuid ? String(user.uuid).toLowerCase() : null,
+    user.name ? String(user.name).toLowerCase() : null,
+    user.username ? String(user.username).toLowerCase() : null,
+    // Explicit candidate ID mapping for legacy task compatibility
+    (user.name && String(user.name).toLowerCase() === "david") ? "24" : null,
+    (user.name && String(user.name).toLowerCase() === "tomas") ? "22" : null,
+    (user.name && String(user.name).toLowerCase().includes("iqbal")) ? "4" : null
+  ].filter(Boolean);
 
-  // Find assigned projects for active staff member
-  const userProjIds = Array.from(new Set(userTasks.map(t => t.projectId)));
-  const userProjects = db.projects.filter(p => userProjIds.includes(p.id) || (user.name === "John Doe" && (p.name.includes("GENOME") || p.name.includes("BEC") || p.name.includes("OQEP") || p.name.includes("SANVIRA"))));
+  // Filter tasks assigned to active staff member
+  const userTasks = (db.tasks || []).filter(t => {
+    const aVal = t.assignee ? String(t.assignee).toLowerCase() : '';
+    const aIdVal = t.assignee_id ? String(t.assignee_id).toLowerCase() : '';
+    return userKeys.some(key => key === aVal || key === aIdVal);
+  });
+
+  // Find assigned projects for active staff member (from tasks AND teammates roster)
+  const taskProjIds = userTasks.map(t => String(t.projectId || t.project_id || '').toLowerCase());
+  const teammateProjIds = (db.teammates || []).filter(tm => {
+    const tmKeys = [
+      tm.id ? String(tm.id).toLowerCase() : null,
+      tm.uuid ? String(tm.uuid).toLowerCase() : null,
+      tm.name ? String(tm.name).toLowerCase() : null,
+      tm.email ? String(tm.email).toLowerCase() : null
+    ].filter(Boolean);
+    return userKeys.some(key => tmKeys.includes(key));
+  }).map(tm => String(tm.projectId || tm.project_id || tm.assignedProject || '').toLowerCase());
+
+  const userProjIds = Array.from(new Set([...taskProjIds, ...teammateProjIds].filter(Boolean)));
+
+  const userProjects = (db.projects || []).filter(p => {
+    const pKeys = [
+      String(p.id).toLowerCase(),
+      p.uuid ? String(p.uuid).toLowerCase() : null,
+      p.db_id ? String(p.db_id).toLowerCase() : null,
+      p.name ? String(p.name).toLowerCase() : null
+    ].filter(Boolean);
+
+    return userProjIds.some(upId => pKeys.includes(upId));
+  });
+
+  // Filtered tasks for My Tasks view
+  const filteredUserTasks = userTasks.filter(t => {
+    const proj = (db.projects || []).find(p => 
+      String(p.id) === String(t.projectId) || 
+      String(p.uuid || '') === String(t.projectId) || 
+      String(p.id) === String(t.project_id) ||
+      (p.name && t.projectId && String(p.name).toLowerCase() === String(t.projectId).toLowerCase())
+    );
+    const pm = (db.users || []).find(u => String(u.id) === String(proj?.pm_id) || String(u.uuid) === String(proj?.pm_id)) || { name: proj?.project_manager || "Project Manager" };
+    
+    // Status Filter
+    if (taskStatusFilter !== 'All' && t.status !== taskStatusFilter) {
+      return false;
+    }
+    // Project Filter
+    if (taskProjectFilter !== 'All' && String(proj?.id || t.projectId || t.project_id) !== String(taskProjectFilter)) {
+      return false;
+    }
+    // Search Query Filter
+    if (taskSearch.trim()) {
+      const q = taskSearch.toLowerCase().trim();
+      const titleMatch = t.title ? t.title.toLowerCase().includes(q) : false;
+      const projMatch = proj?.name ? proj.name.toLowerCase().includes(q) : false;
+      const pmMatch = pm?.name ? pm.name.toLowerCase().includes(q) : false;
+      const statusMatch = t.status ? t.status.toLowerCase().includes(q) : false;
+      return titleMatch || projMatch || pmMatch || statusMatch;
+    }
+    return true;
+  });
+
+  // Helper to match a task to its parent project in db.projects
+  const findTaskProject = (t) => {
+    if (!t) return null;
+    const pKeys = [
+      t.projectId ? String(t.projectId).toLowerCase() : null,
+      t.project_id ? String(t.project_id).toLowerCase() : null
+    ].filter(Boolean);
+
+    return (db.projects || []).find(p => {
+      const pIds = [
+        String(p.id).toLowerCase(),
+        p.uuid ? String(p.uuid).toLowerCase() : null,
+        p.db_id ? String(p.db_id).toLowerCase() : null,
+        p.name ? String(p.name).toLowerCase() : null
+      ].filter(Boolean);
+
+      return pKeys.some(k => pIds.includes(k));
+    });
+  };
 
   // Helper to find the Project Manager for a given project ID
   const getProjectManager = (projId) => {
-    const proj = (db.projects || []).find(p => String(p.id) === String(projId) || String(p.uuid) === String(projId));
+    const pKeyStr = String(projId).toLowerCase();
+    const proj = (db.projects || []).find(p => 
+      String(p.id).toLowerCase() === pKeyStr || 
+      String(p.uuid || '').toLowerCase() === pKeyStr ||
+      String(p.db_id || '').toLowerCase() === pKeyStr
+    );
     if (proj) {
       if (proj.project_manager) return { name: proj.project_manager, role: "Project Manager" };
       if (proj.pm_name) return { name: proj.pm_name, role: "Project Manager" };
@@ -156,20 +256,43 @@ function StaffPortal() {
         if (pmUser) return pmUser;
       }
     }
-    const fallbackPM = db.users.find(u => u.role && u.role.toLowerCase().includes("project manager"));
+    const fallbackPM = (db.users || []).find(u => u.role && u.role.toLowerCase().includes("project manager"));
     return fallbackPM || { name: "Project Manager", role: "Project Manager" };
   };
 
-  // Helper to get colleagues/teammates working on the same project (excluding Admins & PMs)
+  // Helper to get colleagues/teammates working on the same project (excluding Admins & PMs & self)
   const getTeammates = (projId) => {
-    const projTasks = db.tasks.filter(t => t.projectId === projId);
+    const pKeyStr = String(projId).toLowerCase();
+
+    // Match project in db.projects to get all possible IDs (id, uuid, db_id)
+    const matchedProj = (db.projects || []).find(p => 
+      String(p.id).toLowerCase() === pKeyStr || 
+      String(p.uuid || '').toLowerCase() === pKeyStr ||
+      String(p.db_id || '').toLowerCase() === pKeyStr
+    );
+    const validProjIds = matchedProj ? [
+      String(matchedProj.id).toLowerCase(),
+      matchedProj.uuid ? String(matchedProj.uuid).toLowerCase() : null,
+      matchedProj.db_id ? String(matchedProj.db_id).toLowerCase() : null
+    ].filter(Boolean) : [pKeyStr];
+
+    const projTasks = (db.tasks || []).filter(t => {
+      const tPId = String(t.projectId || t.project_id || '').toLowerCase();
+      return validProjIds.includes(tPId);
+    });
+
     const pmUser = getProjectManager(projId);
     const pmNameLower = String(pmUser ? pmUser.name : "Project Manager").trim().toLowerCase();
 
-    const isPMOrAdmin = (u) => {
+    const isPMOrAdminOrSelf = (u) => {
       if (!u) return true;
       const nameLower = String(u.name || '').trim().toLowerCase();
       const roleLower = String(u.role || u.userType || u.user_type || '').trim().toLowerCase();
+      const uIdLower = String(u.id || u.uuid || '').trim().toLowerCase();
+      
+      const isSelf = userKeys.includes(uIdLower) || userKeys.includes(nameLower);
+      if (isSelf) return true;
+
       return (
         nameLower === 'saurabh m.' ||
         nameLower === 'administrator' ||
@@ -184,19 +307,28 @@ function StaffPortal() {
     const teamMembers = [];
     const seen = new Set();
 
+    // 1. Collect from tasks
     projTasks.forEach(t => {
-      if (t.assignee) {
-        const u = db.users.find(usr => String(usr.id) === String(t.assignee) || String(usr.uuid) === String(t.assignee) || usr.name === t.assignee);
-        if (u && !isPMOrAdmin(u) && String(u.id) !== String(user.id) && !seen.has(String(u.name || u.id).toLowerCase())) {
+      const assigneeKey = t.assignee || t.assignee_id;
+      if (assigneeKey) {
+        const u = (db.users || []).find(usr => 
+          String(usr.id).toLowerCase() === String(assigneeKey).toLowerCase() || 
+          String(usr.uuid || '').toLowerCase() === String(assigneeKey).toLowerCase() || 
+          String(usr.name || '').toLowerCase() === String(assigneeKey).toLowerCase() ||
+          String(usr.username || '').toLowerCase() === String(assigneeKey).toLowerCase()
+        );
+        if (u && !isPMOrAdminOrSelf(u) && !seen.has(String(u.name || u.id).toLowerCase())) {
           seen.add(String(u.name || u.id).toLowerCase());
           teamMembers.push(u);
         }
       }
     });
 
+    // 2. Collect from teammates
     (db.teammates || []).forEach(tm => {
-      if (String(tm.projectId || tm.project_id || tm.assignedProject).toLowerCase() === String(projId).toLowerCase()) {
-        if (!isPMOrAdmin(tm) && String(tm.name).toLowerCase() !== String(user.name).toLowerCase() && !seen.has(String(tm.name || tm.id).toLowerCase())) {
+      const tmProj = String(tm.projectId || tm.project_id || tm.assignedProject || '').toLowerCase();
+      if (validProjIds.includes(tmProj)) {
+        if (!isPMOrAdminOrSelf(tm) && !seen.has(String(tm.name || tm.id).toLowerCase())) {
           seen.add(String(tm.name || tm.id).toLowerCase());
           teamMembers.push(tm);
         }
@@ -228,26 +360,36 @@ function StaffPortal() {
     setEditStatus(task.status || "Not Started");
   };
 
-  const handleUpdateProgress = (e) => {
-    e.preventDefault();
+  const handleUpdateProgress = async (e) => {
+    if (e) e.preventDefault();
     if (!editingTaskId) return;
 
-    const targetTask = db.tasks.find(t => t.id === editingTaskId);
+    const targetTask = (db.tasks || []).find(t => String(t.id) === String(editingTaskId) || String(t.uuid) === String(editingTaskId));
     if (!targetTask) return;
 
-    const nextTasks = db.tasks.map(t =>
-      t.id === editingTaskId ? { ...t, percent: parseInt(editProgress), status: editStatus } : t
+    const newPercent = Math.min(100, Math.max(0, parseInt(editProgress, 10) || 0));
+    const newStatus = editStatus || (newPercent === 100 ? "Done" : (newPercent > 0 ? "In Progress" : "Not Started"));
+    const projId = targetTask.projectId || targetTask.project_id;
+
+    // 1. Instant local state update
+    const nextTasks = (db.tasks || []).map(t =>
+      (String(t.id) === String(editingTaskId) || String(t.uuid) === String(editingTaskId))
+        ? { ...t, percent: newPercent, status: newStatus }
+        : t
     );
 
     // Calculate parent project progress
-    const projId = targetTask.projectId;
-    const projTasks = nextTasks.filter(t => t.projectId === projId);
+    const projTasks = nextTasks.filter(t => 
+      String(t.projectId) === String(projId) || String(t.project_id) === String(projId)
+    );
     const avgProgress = projTasks.length > 0
-      ? Math.round(projTasks.reduce((sum, t) => sum + (t.percent || 0), 0) / projTasks.length)
-      : 0;
+      ? Math.round(projTasks.reduce((sum, t) => sum + (Number(t.percent) || 0), 0) / projTasks.length)
+      : newPercent;
 
-    const nextProjects = db.projects.map(p =>
-      p.id === projId ? { ...p, progress: avgProgress } : p
+    const nextProjects = (db.projects || []).map(p =>
+      (String(p.id) === String(projId) || String(p.uuid) === String(projId))
+        ? { ...p, progress: avgProgress }
+        : p
     );
 
     const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
@@ -257,7 +399,7 @@ function StaffPortal() {
       tasks: nextTasks,
       projects: nextProjects,
       history: [
-        { id: uid("h"), user: user.name, action: `Updated progress of '${targetTask.title}' to ${editProgress}% (${editStatus})`, at: timestamp },
+        { id: uid("h"), user: user.name, action: `Updated progress of '${targetTask.title}' to ${newPercent}% (${newStatus})`, at: timestamp },
         ...(db.history || [])
       ].slice(0, 100)
     };
@@ -265,6 +407,24 @@ function StaffPortal() {
     setDb(nextDb);
     saveDB(nextDb);
     setEditingTaskId(null);
+    setSaveNotification(`✓ Task progress saved successfully (${newPercent}%)`);
+    setTimeout(() => setSaveNotification(null), 3500);
+
+    // 2. Direct MySQL background API update
+    try {
+      await fetch('/api/update-task-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: targetTask.uuid || targetTask.id || targetTask.title,
+          percent: newPercent,
+          status: newStatus,
+          projectId: projId
+        })
+      });
+    } catch (err) {
+      console.error("Background task progress save error:", err);
+    }
   };
 
   const handleSaveProfile = (e) => {
@@ -303,7 +463,7 @@ function StaffPortal() {
   const inProgressTasksCount = userTasks.filter(t => t.status === "In Progress" || (t.percent > 0 && t.percent < 100)).length;
   const avgTaskCompletion = totalTasksCount > 0
     ? Math.round(userTasks.reduce((sum, t) => sum + (t.percent || 0), 0) / totalTasksCount)
-    : 84;
+    : 0;
 
   return (
     <div className="wrap">
@@ -435,18 +595,26 @@ function StaffPortal() {
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
                     {userTasks.map(t => {
-                      const proj = db.projects.find(p => p.id === t.projectId);
+                      const proj = findTaskProject(t);
+                      const pm = getProjectManager(proj?.id || t.projectId || t.project_id);
                       return (
-                        <div key={t.id} style={{ padding: 14, borderRadius: 12, border: "1px solid var(--line)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div key={t.id || t.uuid} style={{ padding: 14, borderRadius: 12, border: "1px solid var(--line)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                             <div>
-                              <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>{t.title}</div>
-                              <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>Project: <strong>{proj?.name || "GENOME"}</strong></div>
+                              <div style={{ fontWeight: 800, fontSize: 13.5, color: "var(--ink)" }}>{t.title}</div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                                <span className="pill" style={{ background: "#e0f2fe", color: "#0369a1", fontSize: 10.5, fontWeight: 700, padding: "1px 6px", border: "1px solid #bae6fd" }}>
+                                  🏢 {proj?.name || "Project"}
+                                </span>
+                                <span className="pill" style={{ background: "#fef3c7", color: "#b45309", fontSize: 10.5, fontWeight: 700, padding: "1px 6px", border: "1px solid #fde68a" }}>
+                                  👔 PM: {pm?.name || "Project Manager"}
+                                </span>
+                              </div>
                             </div>
                             <Tag label={t.status} color={statusColor(t.status)} />
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginTop: 4 }}>
-                            <span className="muted">Due: {fmt(t.target)}</span>
+                            <span className="muted">Due: {fmt(t.target || t.target_date)}</span>
                             <span style={{ fontWeight: 700, color: "var(--ink)" }}>{t.percent}%</span>
                           </div>
                           <Bar value={t.percent} color={barColor(t.percent)} />
@@ -567,152 +735,419 @@ function StaffPortal() {
 
           {/* Tasks Tab */}
           {tab === "tasks" && (
-            <>
-              <div className="topbar">
-                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => {
-                      if (window.history.length > 1) {
-                        window.history.back();
-                      } else {
-                        setTab("overview");
-                      }
-                    }}
-                    className="btn sec sm"
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "7px 14px",
-                      background: "#fff",
-                      border: "1px solid var(--line)",
-                      borderRadius: 9,
-                      fontWeight: 700,
-                      fontSize: 12.5,
-                      color: "var(--ink)",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                      cursor: "pointer"
-                    }}
-                  >
-                    ← Back
-                  </button>
+            <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
+              {/* Floating Save Notification Toast */}
+              {saveNotification && (
+                <div style={{
+                  position: "fixed",
+                  top: 24,
+                  right: 24,
+                  zIndex: 9999,
+                  background: "#10b981",
+                  color: "#fff",
+                  padding: "12px 20px",
+                  borderRadius: 12,
+                  fontWeight: 800,
+                  fontSize: 13.5,
+                  boxShadow: "0 10px 25px rgba(16,185,129,0.35)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  animation: "fadeIn 0.2s ease"
+                }}>
+                  {saveNotification}
+                </div>
+              )}
+
+              {/* Header Banner Card */}
+              <div className="card" style={{ padding: "20px 24px", background: "#fff", borderRadius: 16, border: "1px solid var(--line)", boxShadow: "0 2px 10px rgba(0,0,0,0.02)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
                   <div>
-                    <h1 className="disp" style={{ margin: 0 }}>
-                      My Assigned Tasks ({userTasks.length})
+                    <h1 className="disp" style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>
+                      My Assigned Tasks ({filteredUserTasks.length})
                     </h1>
-                    <p style={{ margin: "2px 0 0 0" }}>
-                      Keep track of tasks assigned directly to {user.name} ({user.role}) and edit completion progress.
+                    <p style={{ margin: "4px 0 0 0", color: "#64748b", fontSize: 12.5 }}>
+                      Manage task progress, update completion %, and save updates directly to database.
                     </p>
                   </div>
+                  <span className="pill" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", fontWeight: 700, fontSize: 12, padding: "6px 16px", borderRadius: 10 }}>
+                    💼 {user.name} ({user.role})
+                  </span>
                 </div>
               </div>
 
-              <div className="content split-1-1">
+              {/* KPI Summary Banner */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+                <div style={{ padding: "16px 20px", borderRadius: 16, background: "#fff", border: "1px solid var(--line)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)", position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "#0f172a" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Total Assigned</span>
+                    <span style={{ fontSize: 16 }}>📋</span>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", marginTop: 6 }}>{userTasks.length}</div>
+                </div>
+
+                <div style={{ padding: "16px 20px", borderRadius: 16, background: "#fff", border: "1px solid var(--line)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)", position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "#d97706" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#d97706", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>In Progress</span>
+                    <span style={{ fontSize: 16 }}>⏳</span>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: "#d97706", marginTop: 6 }}>{inProgressTasksCount}</div>
+                </div>
+
+                <div style={{ padding: "16px 20px", borderRadius: 16, background: "#fff", border: "1px solid var(--line)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)", position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "#059669" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#059669", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Completed</span>
+                    <span style={{ fontSize: 16 }}>✅</span>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: "#059669", marginTop: 6 }}>{completedTasksCount}</div>
+                </div>
+
+                <div style={{ padding: "16px 20px", borderRadius: 16, background: "#fff", border: "1px solid var(--line)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)", position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "#2563eb" }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Avg Progress</span>
+                    <span style={{ fontSize: 16 }}>🎯</span>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: "#2563eb", marginTop: 6 }}>{avgTaskCompletion}%</div>
+                </div>
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div style={{ background: "#fff", padding: 14, borderRadius: 16, border: "1px solid var(--line)", boxShadow: "0 2px 8px rgba(0,0,0,0.02)", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <input 
+                    type="text" 
+                    className="inp" 
+                    placeholder="🔍 Search tasks by title, project, or PM..." 
+                    value={taskSearch}
+                    onChange={(e) => setTaskSearch(e.target.value)}
+                    style={{ width: "100%", padding: "9px 14px", borderRadius: 8, fontSize: 12.5, border: "1px solid #cbd5e1" }}
+                  />
+                </div>
+
+                <div style={{ minWidth: 170 }}>
+                  <select
+                    className="inp"
+                    value={taskProjectFilter}
+                    onChange={(e) => setTaskProjectFilter(e.target.value)}
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 8, fontSize: 12, border: "1px solid #cbd5e1", background: "#fff", fontWeight: 600 }}
+                  >
+                    <option value="All">All Projects ({userProjects.length})</option>
+                    {userProjects.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {["All", "In Progress", "Done", "Not Started", "On Hold"].map(st => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setTaskStatusFilter(st)}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 11.5,
+                        fontWeight: 700,
+                        borderRadius: 8,
+                        border: taskStatusFilter === st ? "1.5px solid #2563eb" : "1px solid #cbd5e1",
+                        background: taskStatusFilter === st ? "#eff6ff" : "#fff",
+                        color: taskStatusFilter === st ? "#2563eb" : "#475569",
+                        cursor: "pointer"
+                      }}
+                    >
+                      {st}
+                    </button>
+                  ))}
+                </div>
+
+                {(taskSearch || taskStatusFilter !== 'All' || taskProjectFilter !== 'All') && (
+                  <button
+                    type="button"
+                    onClick={() => { setTaskSearch(''); setTaskStatusFilter('All'); setTaskProjectFilter('All'); }}
+                    style={{ fontSize: 11.5, color: "#ef4444", border: "none", background: "none", cursor: "pointer", fontWeight: 700, padding: "4px 8px" }}
+                  >
+                    Reset Filters ✕
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 20, alignItems: "start" }}>
                 {/* Task list pane */}
-                <div className="card" style={{ padding: 20, background: "#fff", display: "flex", flexDirection: "column", gap: 16 }}>
-                  {userTasks.map(t => {
-                    const proj = db.projects.find(p => p.id === t.projectId);
-                    const isEditing = editingTaskId === t.id;
+                <div className="card" style={{ padding: 22, background: "#fff", borderRadius: 16, border: "1px solid var(--line)", boxShadow: "0 4px 20px rgba(0,0,0,0.03)", display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: 12 }}>
+                    <div>
+                      <h3 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#1e293b" }}>
+                        📋 Assigned Task Cards
+                      </h3>
+                      <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 2 }}>
+                        Click any task card to edit completion in the sticky controller panel.
+                      </div>
+                    </div>
+                    <span className="pill" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe", fontWeight: 700, fontSize: 11, padding: "3px 10px" }}>
+                      Showing {filteredUserTasks.length} of {userTasks.length}
+                    </span>
+                  </div>
+
+                  {filteredUserTasks.map(t => {
+                    const proj = findTaskProject(t);
+                    const pm = getProjectManager(proj?.id || t.projectId || t.project_id);
+                    const isEditing = String(editingTaskId) === String(t.id) || String(editingTaskId) === String(t.uuid);
 
                     return (
-                      <div key={t.id} style={{ padding: 16, border: "1px solid var(--line)", borderRadius: 12, background: isEditing ? "#c0762b08" : "#fff" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+                      <div 
+                        key={t.id || t.uuid} 
+                        onClick={() => startEditProgress(t)}
+                        style={{ 
+                          padding: 20, 
+                          border: isEditing ? "2px solid #2563eb" : "1px solid #e2e8f0", 
+                          borderRadius: 16, 
+                          background: isEditing ? "#f0f9ff" : "#ffffff",
+                          boxShadow: isEditing ? "0 8px 24px rgba(37,99,235,0.18)" : "0 4px 12px rgba(0,0,0,0.03)",
+                          cursor: "pointer",
+                          transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 14
+                        }}
+                      >
+                        {/* Task Card Header: Title & Status */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                           <div>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)" }}>{t.title}</div>
-                            <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>Project: {proj?.name || "GENOME"}</div>
+                            <div style={{ fontWeight: 800, fontSize: 16, color: "#0f172a", letterSpacing: "-.2px" }}>{t.title}</div>
+                            
+                            {/* Project, PM, and Discipline Badges */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                              <span className="pill" style={{ background: "#eff6ff", color: "#1d4ed8", fontSize: 11, fontWeight: 700, border: "1px solid #bfdbfe", padding: "3px 10px", borderRadius: 8 }}>
+                                🏢 {proj?.name || "Project Assignment"}
+                              </span>
+                              <span className="pill" style={{ background: "#fffbeb", color: "#b45309", fontSize: 11, fontWeight: 700, border: "1px solid #fde68a", padding: "3px 10px", borderRadius: 8 }}>
+                                👔 PM: {pm?.name || "Project Manager"}
+                              </span>
+                              <span className="pill" style={{ background: "#f8fafc", color: "#475569", fontSize: 11, fontWeight: 600, border: "1px solid #e2e8f0", padding: "3px 10px", borderRadius: 8 }}>
+                                ⚙️ {t.discipline || user.discipline || "Engineering"}
+                              </span>
+                            </div>
                           </div>
+                          
                           <Tag label={t.status} color={statusColor(t.status)} />
                         </div>
 
-                        <div style={{ marginTop: 14 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginBottom: 5 }}>
-                            <span className="muted">Progress:</span>
-                            <span style={{ fontWeight: 700, color: "var(--ink)" }}>{t.percent}%</span>
+                        {/* Progress Bar Section */}
+                        <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 6 }}>
+                            <span style={{ color: "#475569", fontWeight: 700 }}>Task Completion</span>
+                            <span style={{ fontWeight: 800, color: t.percent === 100 ? "#059669" : "#2563eb", fontSize: 13 }}>{t.percent}%</span>
                           </div>
                           <Bar value={t.percent} color={barColor(t.percent)} />
                         </div>
 
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: "1px dashed var(--line)" }}>
-                          <span className="muted" style={{ fontSize: 11.5 }}>Due Date: {fmt(t.target)}</span>
+                        {/* Card Footer: Due Date & Action Button */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
+                          <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                            📅 Target Date: <strong style={{ color: "#334155" }}>{fmt(t.target || t.target_date)}</strong>
+                          </span>
                           
                           {!isEditing ? (
-                            <button className="btn sm" onClick={() => startEditProgress(t)} style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--line)" }}>
+                            <button 
+                              className="btn sm" 
+                              onClick={(e) => { e.stopPropagation(); startEditProgress(t); }} 
+                              style={{ 
+                                background: "#2563eb", 
+                                color: "#fff", 
+                                border: "none", 
+                                borderRadius: 10, 
+                                padding: "7px 16px", 
+                                fontSize: 12, 
+                                fontWeight: 700, 
+                                cursor: "pointer",
+                                boxShadow: "0 4px 12px rgba(37,99,235,0.25)",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6
+                              }}
+                            >
                               ✏️ Update Progress
                             </button>
                           ) : (
-                            <span style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600 }}>Editing...</span>
+                            <span style={{ fontSize: 12, color: "#2563eb", fontWeight: 800, display: "flex", alignItems: "center", gap: 6, background: "#dbeafe", padding: "6px 12px", borderRadius: 8 }}>
+                              🔄 Active in Controller
+                            </span>
                           )}
                         </div>
                       </div>
                     );
                   })}
-                  {userTasks.length === 0 && (
-                    <div className="muted" style={{ textAlign: "center", padding: 30 }}>No tasks assigned to {user.name}.</div>
+                  {filteredUserTasks.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "50px 20px", color: "#64748b" }}>
+                      <div style={{ width: 54, height: 54, borderRadius: 16, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, margin: "0 auto 14px" }}>
+                        📋
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>No Assigned Tasks Found</div>
+                      <div style={{ fontSize: 12.5, color: "#64748b", marginTop: 4, maxWidth: 300, margin: "6px auto 0", lineHeight: 1.5 }}>
+                        {userTasks.length === 0 
+                          ? `There are currently no tasks assigned to ${user.name}. Tasks assigned by Project Managers will appear here automatically.` 
+                          : "No tasks match your search or status filter. Try clearing filters to view all assigned tasks."}
+                      </div>
+                      {(taskSearch || taskStatusFilter !== 'All' || taskProjectFilter !== 'All') && (
+                        <button
+                          type="button"
+                          onClick={() => { setTaskSearch(''); setTaskStatusFilter('All'); setTaskProjectFilter('All'); }}
+                          style={{ marginTop: 14, fontSize: 12, color: "#2563eb", border: "1px solid #bfdbfe", background: "#eff6ff", cursor: "pointer", fontWeight: 700, padding: "6px 14px", borderRadius: 8 }}
+                        >
+                          Clear Search Filters ✕
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 
-                {/* Progress edit pane */}
-                <div className="card" style={{ padding: 20, background: "#fff", height: "auto" }}>
-                  <div className="h3 disp" style={{ borderBottom: "1px solid var(--line)", paddingBottom: 10, marginBottom: 14 }}>
-                    Task Progress Controller
+                {/* Sticky Progress edit pane */}
+                <div 
+                  className="card" 
+                  style={{ 
+                    padding: 22, 
+                    background: "#fff", 
+                    borderRadius: 16, 
+                    border: "1px solid var(--line)", 
+                    boxShadow: "0 4px 20px rgba(0,0,0,0.03)", 
+                    position: "sticky", 
+                    top: 20, 
+                    height: "fit-content" 
+                  }}
+                >
+                  <div style={{ borderBottom: "1px solid var(--line)", paddingBottom: 12, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+                      ⚙️
+                    </div>
+                    <div>
+                      <h3 className="disp" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                        Task Progress Controller
+                      </h3>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>Update completion & save to database</div>
+                    </div>
                   </div>
                   
                   {editingTaskId ? (
-                    <form onSubmit={handleUpdateProgress} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>
-                        {db.tasks.find(t => t.id === editingTaskId)?.title}
-                      </div>
+                    (() => {
+                      const curTask = (db.tasks || []).find(t => String(t.id) === String(editingTaskId) || String(t.uuid) === String(editingTaskId));
+                      const curProj = findTaskProject(curTask);
+                      const curPm = getProjectManager(curProj?.id || curTask?.projectId || curTask?.project_id);
 
-                      <div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
-                          <span className="muted">Completion Percentage:</span>
-                          <span style={{ fontWeight: 700, color: "var(--accent)" }}>{editProgress}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={editProgress}
-                          onChange={(e) => setEditProgress(e.target.value)}
-                          style={{ width: "100%" }}
-                        />
-                      </div>
+                      return (
+                        <form onSubmit={handleUpdateProgress} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                          <div style={{ background: "#f8fafc", padding: 14, borderRadius: 12, border: "1px solid #e2e8f0" }}>
+                            <div style={{ fontSize: 10.5, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Currently Updating</div>
+                            <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", marginTop: 2 }}>{curTask?.title}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 700 }}>🏢 {curProj?.name || "Project Assignment"}</span>
+                              <span style={{ fontSize: 11, color: "#b45309", fontWeight: 700 }}>👔 PM: {curPm?.name || "PM"}</span>
+                            </div>
+                          </div>
 
-                      <div>
-                        <label style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 600, display: "block", marginBottom: 6 }}>Task Status</label>
-                        <select
-                          className="inp"
-                          value={editStatus}
-                          onChange={(e) => setEditStatus(e.target.value)}
-                          style={{ width: "100%", padding: 10, background: "#fff" }}
-                        >
-                          <option value="Not Started">Not Started</option>
-                          <option value="In Progress">In Progress</option>
-                          <option value="On Hold">On Hold</option>
-                          <option value="TBC">TBC</option>
-                          <option value="Done">Done</option>
-                        </select>
-                      </div>
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8, fontWeight: 700 }}>
+                              <span style={{ color: "#334155" }}>Completion Percentage:</span>
+                              <span style={{ color: "#2563eb", fontSize: 16, fontWeight: 800 }}>{editProgress}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              value={editProgress}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                setEditProgress(val);
+                                if (val === 100) setEditStatus("Done");
+                                else if (val > 0 && editStatus === "Not Started") setEditStatus("In Progress");
+                              }}
+                              style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer", height: 6 }}
+                            />
+                            
+                            {/* Preset Percentage Quick Buttons */}
+                            <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                              {[0, 25, 50, 75, 100].map(pct => (
+                                <button
+                                  key={pct}
+                                  type="button"
+                                  onClick={() => {
+                                    setEditProgress(pct);
+                                    if (pct === 100) setEditStatus("Done");
+                                    else if (pct > 0 && editStatus === "Not Started") setEditStatus("In Progress");
+                                  }}
+                                  style={{
+                                    flex: 1,
+                                    padding: "5px 0",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    borderRadius: 6,
+                                    border: Number(editProgress) === pct ? "1.5px solid #2563eb" : "1px solid #cbd5e1",
+                                    background: Number(editProgress) === pct ? "#eff6ff" : "#fff",
+                                    color: Number(editProgress) === pct ? "#2563eb" : "#475569",
+                                    cursor: "pointer"
+                                  }}
+                                >
+                                  {pct}%
+                                </button>
+                              ))}
+                            </div>
+                          </div>
 
-                      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                        <button type="submit" className="btn" style={{ flex: 1, padding: 10 }}>
-                          Save Progress Update
-                        </button>
-                        <button type="button" className="btn sec" onClick={() => setEditingTaskId(null)} style={{ flex: 0.5 }}>
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
+                          <div>
+                            <label style={{ fontSize: 11.5, color: "#334155", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                              Update Status
+                            </label>
+                            <select
+                              className="inp"
+                              value={editStatus}
+                              onChange={(e) => setEditStatus(e.target.value)}
+                              style={{ width: "100%", padding: "10px 12px", fontSize: 12.5, borderRadius: 8, background: "#fff", border: "1.5px solid #cbd5e1", fontWeight: 600 }}
+                            >
+                              <option value="Not Started">Not Started</option>
+                              <option value="In Progress">In Progress</option>
+                              <option value="On Hold">On Hold</option>
+                              <option value="TBC">TBC</option>
+                              <option value="Done">Done (Completed)</option>
+                            </select>
+                          </div>
+
+                          <div style={{ display: "flex", gap: 10, marginTop: 10, paddingTop: 12, borderTop: "1px solid #e2e8f0" }}>
+                            <button 
+                              type="button" 
+                              className="btn sec" 
+                              onClick={() => setEditingTaskId(null)} 
+                              style={{ flex: 1, padding: "10px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer" }}
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              type="submit" 
+                              className="btn" 
+                              style={{ flex: 1.5, padding: "10px", borderRadius: 8, fontSize: 12, fontWeight: 800, background: "linear-gradient(135deg, #10b981 0%, #059669 100%)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }}
+                            >
+                              💾 Save Progress
+                            </button>
+                          </div>
+                        </form>
+                      );
+                    })()
                   ) : (
-                    <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--muted)" }}>
-                      <div style={{ fontSize: 32, marginBottom: 12 }}>⚙️</div>
-                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>No task selected</div>
-                      <p style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.45 }}>Click the "✏️ Update Progress" button on any task card to start editing progress details.</p>
+                    <div style={{ textAlign: "center", padding: "50px 20px", color: "#64748b" }}>
+                      <div style={{ width: 48, height: 48, borderRadius: 14, background: "#f8fafc", border: "1px solid #e2e8f0", color: "#64748b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, margin: "0 auto 12px" }}>
+                        ⚙️
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>No Task Active</div>
+                      <p style={{ fontSize: 12, marginTop: 6, lineHeight: 1.5, color: "#64748b", maxWidth: 240, margin: "6px auto 0" }}>
+                        Click the <strong>✏️ Update Progress</strong> button on any assigned task to edit completion % and update status.
+                      </p>
                     </div>
                   )}
                 </div>
               </div>
-            </>
+            </div>
           )}
 
           {/* Profile Tab */}

@@ -112,6 +112,127 @@ export default function ProjectDetail({
   const [isDocsExpanded, setIsDocsExpanded] = useState(true);
   const [previewDocModal, setPreviewDocModal] = useState(null);
 
+  // Add Teammate Modal State
+  const [showAddTeammateModal, setShowAddTeammateModal] = useState(false);
+  const [newTmName, setNewTmName] = useState('');
+  const [newTmRole, setNewTmRole] = useState('CAD Technician');
+  const [newTmTaskTitle, setNewTmTaskTitle] = useState('');
+  const [newTmEmail, setNewTmEmail] = useState('');
+  const [newTmPhone, setNewTmPhone] = useState('');
+  const [isSubmittingTm, setIsSubmittingTm] = useState(false);
+
+  const handleCreateTeammateSubmitInProject = (e) => {
+    e.preventDefault();
+    if (!newTmName.trim()) {
+      alert("Please enter teammate's name");
+      return;
+    }
+    const tmUuid = 'tm_' + Math.random().toString(36).substring(2, 9);
+    const taskUuid = 'task_' + Math.random().toString(36).substring(2, 9);
+    const tmName = newTmName.trim();
+    const taskTitle = newTmTaskTitle.trim() || `${tmName} - ${proj.name} Assignment`;
+    const projId = proj.id;
+    const email = newTmEmail.trim() || `${tmName.toLowerCase().replace(/\s+/g, '')}@dgec.com`;
+    const phone = newTmPhone.trim() || '+968 9400 0000';
+
+    // 1. INSTANT LOCAL STATE COMMIT VIA PROPS
+    if (commit) {
+      commit((d) => {
+        const nextUsers = [...(d.users || [])];
+        const nextTeammates = [...(d.teammates || [])];
+        const nextTasks = [...(d.tasks || [])];
+        const nextStaff = [...(d.staff || [])];
+
+        const newUser = {
+          id: tmUuid,
+          uuid: tmUuid,
+          name: tmName,
+          username: tmName.toLowerCase().replace(/\s+/g, ''),
+          role: newTmRole,
+          discipline: newTmRole,
+          email,
+          phone,
+          projectId: projId
+        };
+
+        if (!nextUsers.some(u => String(u.name).toLowerCase() === String(tmName).toLowerCase())) {
+          nextUsers.push(newUser);
+        }
+        if (!nextStaff.some(s => String(s.name).toLowerCase() === String(tmName).toLowerCase())) {
+          nextStaff.push(newUser);
+        }
+
+        nextTeammates.push({
+          id: tmUuid,
+          uuid: tmUuid,
+          name: tmName,
+          role: newTmRole,
+          projectId: projId,
+          taskName: taskTitle
+        });
+
+        nextTasks.push({
+          id: taskUuid,
+          uuid: taskUuid,
+          projectId: projId,
+          project_id: projId,
+          title: taskTitle,
+          assignee: tmName,
+          assignee_id: tmUuid,
+          discipline: newTmRole,
+          percent: 0,
+          status: 'In Progress'
+        });
+
+        return {
+          ...d,
+          users: nextUsers,
+          staff: nextStaff,
+          teammates: nextTeammates,
+          tasks: nextTasks
+        };
+      }, `Created and assigned teammate ${tmName} to ${proj.name}`);
+    }
+
+    // 2. CLOSE MODAL IMMEDIATELY
+    setIsSubmittingTm(false);
+    setShowAddTeammateModal(false);
+    setNewTmName('');
+    setNewTmTaskTitle('');
+    setNewTmEmail('');
+    setNewTmPhone('');
+
+    // 3. PERSIST TO MYSQL DATABASE VIA API ENDPOINTS
+    Promise.all([
+      fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: tmUuid,
+          name: tmName,
+          contact_number: phone,
+          email,
+          role: newTmRole
+        })
+      }),
+      fetch('/api/create-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: taskUuid,
+          projectId: projId,
+          title: taskTitle,
+          discipline: newTmRole,
+          assignee: tmName,
+          status: 'In Progress',
+          percent: 0
+        })
+      })
+    ]).then(() => {
+      console.log(`✅ Saved teammate ${tmName} and task ${taskTitle} to MySQL database!`);
+    }).catch(err => console.error("Error saving teammate to database:", err));
+  };
+
   const projectDocs = (db.project_documents || db.documents || []).filter(doc => 
     projIdMatches.includes(String(doc.projectId || doc.project_id || '').toLowerCase())
   );
@@ -603,12 +724,14 @@ export default function ProjectDetail({
                 </h3>
               </div>
 
-              <button
-                type="button"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "var(--ink)", cursor: "pointer" }}
-              >
-                {isTeammatesExpanded ? "▲" : "▼"}
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  type="button"
+                  style={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "var(--ink)", cursor: "pointer" }}
+                >
+                  {isTeammatesExpanded ? "▲" : "▼"}
+                </button>
+              </div>
             </div>
 
             {/* Accordion Body: Teammates Grid */}
@@ -782,13 +905,36 @@ export default function ProjectDetail({
                             <input type="file" style={{ display: "none" }} onChange={(e) => handleDocumentFileUpload(doc, e.target.files[0])} />
                           </label>
 
-                          <button
-                            className="btn sec sm"
-                            onClick={() => setPreviewDocModal(doc)}
-                            style={{ fontSize: 11, fontWeight: 700, padding: "5px 12px", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", borderRadius: 8, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
-                          >
-                            👁️ View
-                          </button>
+                          {(() => {
+                            const hasUploadedFile = Boolean(doc.fileName || doc.filePath || doc.fileData || doc.fileDataUrl);
+                            return (
+                              <button
+                                type="button"
+                                className="btn sec sm"
+                                disabled={!hasUploadedFile}
+                                onClick={() => {
+                                  if (hasUploadedFile) setPreviewDocModal(doc);
+                                }}
+                                title={hasUploadedFile ? "View uploaded document file" : "Upload a document file to enable viewing"}
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  padding: "5px 12px",
+                                  background: hasUploadedFile ? "#eff6ff" : "#f1f5f9",
+                                  color: hasUploadedFile ? "#1d4ed8" : "#94a3b8",
+                                  border: hasUploadedFile ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
+                                  borderRadius: 8,
+                                  cursor: hasUploadedFile ? "pointer" : "not-allowed",
+                                  opacity: hasUploadedFile ? 1 : 0.55,
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4
+                                }}
+                              >
+                                👁️ View
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -904,20 +1050,36 @@ export default function ProjectDetail({
             </div>
 
             {/* Specific Document Image Area */}
-            <div style={{ padding: 24, background: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400, maxHeight: '68vh', overflow: 'auto' }}>
-              {(previewDocModal.fileData || previewDocModal.fileDataUrl || (previewDocModal.filePath && previewDocModal.filePath.startsWith('data:'))) ? (
-                <img 
-                  src={previewDocModal.fileData || previewDocModal.fileDataUrl || previewDocModal.filePath} 
-                  alt={previewDocModal.documentName} 
-                  style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)' }}
-                />
-              ) : (
-                <img 
-                  src={getDocumentImagePreview(previewDocModal)} 
-                  alt={previewDocModal.documentName} 
-                  style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)' }}
-                />
-              )}
+            <div style={{ padding: 24, background: '#0f172a', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 380, maxHeight: '68vh', overflow: 'auto' }}>
+              {(() => {
+                const docFile = previewDocModal.fileData || previewDocModal.fileDataUrl || previewDocModal.filePath || (previewDocModal.fileName ? `/uploads/${previewDocModal.fileName}` : null);
+                if (docFile) {
+                  const isImage = String(docFile).startsWith('data:image') || /\.(jpg|jpeg|png|gif|webp|svg)($|\?)/i.test(String(previewDocModal.fileName || docFile));
+                  if (isImage) {
+                    return (
+                      <img 
+                        src={docFile} 
+                        alt={previewDocModal.documentName} 
+                        style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 10, boxShadow: '0 12px 30px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)' }}
+                      />
+                    );
+                  }
+                  return (
+                    <iframe 
+                      src={docFile} 
+                      title={previewDocModal.documentName} 
+                      style={{ width: '100%', height: '55vh', borderRadius: 10, border: 'none', background: '#fff' }}
+                    />
+                  );
+                }
+                return (
+                  <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
+                    <div style={{ fontSize: 40, marginBottom: 10 }}>📄</div>
+                    <div style={{ fontWeight: 700, fontSize: 16, color: "#f8fafc" }}>No Uploaded Document File</div>
+                    <div style={{ fontSize: 12, marginTop: 4, color: "#94a3b8" }}>Upload a document file to view its image preview.</div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Modal Footer Controls */}
@@ -926,25 +1088,22 @@ export default function ProjectDetail({
                 🔍 Specific Document Image Record ({previewDocModal.documentName})
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
-                {(previewDocModal.fileData || previewDocModal.fileDataUrl || (previewDocModal.filePath && previewDocModal.filePath.startsWith('data:'))) ? (
-                  <a
-                    href={previewDocModal.fileData || previewDocModal.fileDataUrl || previewDocModal.filePath}
-                    download={previewDocModal.fileName || `${(previewDocModal.documentName || 'document').toLowerCase().replace(/\s+/g, '_')}.png`}
-                    className="btn sec sm"
-                    style={{ padding: '7px 16px', fontSize: 12, borderRadius: 8, fontWeight: 700, textDecoration: 'none', background: '#fff', border: '1px solid #cbd5e1', color: '#1e293b', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    📥 Download Uploaded File
-                  </a>
-                ) : (
-                  <a
-                    href={getDocumentImagePreview(previewDocModal)}
-                    download={`${(previewDocModal.documentName || 'document').toLowerCase().replace(/\s+/g, '_')}_preview.svg`}
-                    className="btn sec sm"
-                    style={{ padding: '7px 16px', fontSize: 12, borderRadius: 8, fontWeight: 700, textDecoration: 'none', background: '#fff', border: '1px solid #cbd5e1', color: '#1e293b', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    📥 Download Image Preview
-                  </a>
-                )}
+                {(() => {
+                  const docFile = previewDocModal.fileData || previewDocModal.fileDataUrl || previewDocModal.filePath || (previewDocModal.fileName ? `/uploads/${previewDocModal.fileName}` : null);
+                  if (docFile) {
+                    return (
+                      <a
+                        href={docFile}
+                        download={previewDocModal.fileName || `${(previewDocModal.documentName || 'document').toLowerCase().replace(/\s+/g, '_')}.png`}
+                        className="btn sec sm"
+                        style={{ padding: '7px 16px', fontSize: 12, borderRadius: 8, fontWeight: 700, textDecoration: 'none', background: '#fff', border: '1px solid #cbd5e1', color: '#1e293b', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
+                        📥 Download Uploaded File
+                      </a>
+                    );
+                  }
+                  return null;
+                })()}
                 <button
                   onClick={() => setPreviewDocModal(null)}
                   className="btn pri sm"
@@ -957,6 +1116,7 @@ export default function ProjectDetail({
           </div>
         </div>
       )}
+
     </div>
   );
 }

@@ -820,11 +820,12 @@ export default function App() {
     String(p.id) === String(sel) || 
     String(p.uuid) === String(sel) || 
     (p.db_id !== undefined && String(p.db_id) === String(sel)) ||
-    (p.name && sel && String(p.name).trim().toLowerCase() === String(sel).trim().toLowerCase())
+          (p.name && sel && String(p.name).trim().toLowerCase() === String(sel).trim().toLowerCase())
   );
 
   const ctx = {
     db: displayDb,
+    commit,
     rawDb: db,
     isAdmin,
     isPM,

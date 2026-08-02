@@ -4,10 +4,20 @@ import Bar from '../components/Bar';
 import Tag from '../components/Tag';
 import { fmt, statusColor, barColor } from '../utils/helpers';
 
-export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUser }) {
+export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUser, commit }) {
   const [expandedProjectId, setExpandedProjectId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+
+  // Create Teammate Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [targetProjectId, setTargetProjectId] = useState('');
+  const [newTmName, setNewTmName] = useState('');
+  const [newTmRole, setNewTmRole] = useState('CAD Technician');
+  const [newTmTaskTitle, setNewTmTaskTitle] = useState('');
+  const [newTmEmail, setNewTmEmail] = useState('');
+  const [newTmPhone, setNewTmPhone] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const safeDb = db || {};
   const users = safeDb.users || [];
@@ -37,13 +47,127 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
     setExpandedProjectId(prev => prev === projId ? null : projId);
   };
 
-  const handleAddTeammateToProject = (projectId, e) => {
+  const handleOpenCreateModal = (projId = null, e) => {
     if (e) e.stopPropagation();
-    if (setModal) {
-      setModal({ type: "task", projectId });
-    } else if (onAdd) {
-      onAdd();
+    setTargetProjectId(projId || (filteredProjects[0] ? filteredProjects[0].id : ''));
+    setShowCreateModal(true);
+  };
+
+  const handleCreateTeammateSubmit = (e) => {
+    e.preventDefault();
+    if (!newTmName.trim()) {
+      alert("Please enter teammate's name");
+      return;
     }
+    const projId = targetProjectId || (filteredProjects[0] ? filteredProjects[0].id : null);
+    if (!projId) {
+      alert("Please select a project to assign teammate");
+      return;
+    }
+
+    const tmUuid = 'tm_' + Math.random().toString(36).substring(2, 9);
+    const taskUuid = 'task_' + Math.random().toString(36).substring(2, 9);
+    const tmName = newTmName.trim();
+    const taskTitle = newTmTaskTitle.trim() || `${tmName} - Project Assignment`;
+    const email = newTmEmail.trim() || `${tmName.toLowerCase().replace(/\s+/g, '')}@dgec.com`;
+    const phone = newTmPhone.trim() || '+968 9400 0000';
+
+    // 1. INSTANT LOCAL STATE COMMIT VIA PROPS
+    if (commit) {
+      commit((d) => {
+        const nextUsers = [...(d.users || [])];
+        const nextTeammates = [...(d.teammates || [])];
+        const nextTasks = [...(d.tasks || [])];
+        const nextStaff = [...(d.staff || [])];
+
+        const newUser = {
+          id: tmUuid,
+          uuid: tmUuid,
+          name: tmName,
+          username: tmName.toLowerCase().replace(/\s+/g, ''),
+          role: newTmRole,
+          discipline: newTmRole,
+          email,
+          phone,
+          projectId: projId
+        };
+
+        if (!nextUsers.some(u => String(u.name).toLowerCase() === String(tmName).toLowerCase())) {
+          nextUsers.push(newUser);
+        }
+        if (!nextStaff.some(s => String(s.name).toLowerCase() === String(tmName).toLowerCase())) {
+          nextStaff.push(newUser);
+        }
+
+        nextTeammates.push({
+          id: tmUuid,
+          uuid: tmUuid,
+          name: tmName,
+          role: newTmRole,
+          projectId: projId,
+          taskName: taskTitle
+        });
+
+        nextTasks.push({
+          id: taskUuid,
+          uuid: taskUuid,
+          projectId: projId,
+          project_id: projId,
+          title: taskTitle,
+          assignee: tmName,
+          assignee_id: tmUuid,
+          discipline: newTmRole,
+          percent: 0,
+          status: 'In Progress'
+        });
+
+        return {
+          ...d,
+          users: nextUsers,
+          staff: nextStaff,
+          teammates: nextTeammates,
+          tasks: nextTasks
+        };
+      }, `Created and assigned teammate ${tmName}`);
+    }
+
+    // 2. CLOSE MODAL IMMEDIATELY
+    setIsSubmitting(false);
+    setShowCreateModal(false);
+    setNewTmName('');
+    setNewTmTaskTitle('');
+    setNewTmEmail('');
+    setNewTmPhone('');
+
+    // 3. PERSIST TO MYSQL DATABASE VIA API ENDPOINTS
+    Promise.all([
+      fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: tmUuid,
+          name: tmName,
+          contact_number: phone,
+          email,
+          role: newTmRole
+        })
+      }),
+      fetch('/api/create-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: taskUuid,
+          projectId: projId,
+          title: taskTitle,
+          discipline: newTmRole,
+          assignee: tmName,
+          status: 'In Progress',
+          percent: 0
+        })
+      })
+    ]).then(() => {
+      console.log(`✅ Saved teammate ${tmName} and task ${taskTitle} to MySQL database!`);
+    }).catch(err => console.error("Error saving teammate to database:", err));
   };
 
   const handleRemoveTeammate = (projectId, userId, e) => {
@@ -59,6 +183,18 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
         body: JSON.stringify({ userId, projectId, name: uName })
       }).catch(err => console.error("Failed to delete teammate API:", err));
     } catch(err) {}
+
+    if (commit) {
+      commit((d) => {
+        const nextTasks = (d.tasks || []).filter(t => 
+          !(String(t.projectId) === String(projectId) && (String(t.assignee) === String(userId) || (uName && String(t.assignee).toLowerCase() === uName.toLowerCase())))
+        );
+        const nextTeammates = (d.teammates || []).filter(tm => 
+          !(String(tm.id) === String(userId) || (uName && String(tm.name).toLowerCase() === uName.toLowerCase()))
+        );
+        return { ...d, tasks: nextTasks, teammates: nextTeammates };
+      }, `Removed teammate from project`);
+    }
   };
 
   return (
@@ -103,11 +239,6 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
               </h2>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn sm" onClick={onAdd} style={{ background: "#2563eb", color: "#fff", border: "none", padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              ＋ Create Teammate
-            </button>
-          </div>
         </div>
       </div>
 
@@ -151,7 +282,46 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
         }}
       >
         {filteredProjects.map((project) => {
-          const client = db.clients.find(c => String(c.id) === String(project.clientId) || String(c.id) === String(project.client_id) || String(c.uuid) === String(project.client_id));
+          const clientName = (() => {
+            if (project.client_name) return project.client_name;
+            if (project.clientName && typeof project.clientName === 'string') return project.clientName;
+            
+            const rawVal = project.client || project.clientId || project.client_id;
+            const cId = String(rawVal || '').toLowerCase().trim();
+
+            if (!cId || cId === '[object object]') return "Unassigned Client";
+
+            // 1. Search in db.clients
+            const foundClient = (db.clients || []).find(c => {
+              const cidStr = String(c.id || '').toLowerCase();
+              const cuuidStr = String(c.uuid || '').toLowerCase();
+              const cnameStr = String(c.name || '').toLowerCase();
+              const ccompStr = String(c.company || '').toLowerCase();
+              return cidStr === cId || cuuidStr === cId || cnameStr === cId || ccompStr === cId;
+            });
+            if (foundClient) return foundClient.name || foundClient.company || foundClient.contact_name;
+
+            // 2. Search in db.users for role=client
+            const foundClientUser = (db.users || []).find(u => {
+              const r = String(u.role || '').toLowerCase();
+              const ut = String(u.userType || u.user_type || '').toLowerCase();
+              const isClient = r.includes('client') || ut.includes('client');
+              const uidStr = String(u.id || '').toLowerCase();
+              const uuuidStr = String(u.uuid || '').toLowerCase();
+              const unameStr = String(u.name || '').toLowerCase();
+              const uuserStr = String(u.username || '').toLowerCase();
+              return isClient && (uidStr === cId || uuuidStr === cId || unameStr === cId || uuserStr === cId);
+            });
+            if (foundClientUser) return foundClientUser.name || foundClientUser.username;
+
+            // 3. String value fallback if it's a valid string name
+            if (typeof rawVal === 'string' && rawVal.trim().length > 0 && !rawVal.includes('{')) {
+              return rawVal.trim();
+            }
+
+            return "Unassigned Client";
+          })();
+
           const projectTasks = db.tasks.filter(t => String(t.projectId) === String(project.id) || String(t.project_id) === String(project.id) || String(t.projectId) === String(project.uuid));
           const activeTasksCount = projectTasks.filter(t => t.status !== "Done").length;
 
@@ -260,10 +430,10 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
                       <Tag label={project.status || 'Active'} color={statusColor(project.status, db.settings?.projectStatuses)} />
                     </div>
                     
-                    {/* CLEAN SIDE-BY-SIDE BADGES (NO OVERLAPPING TEXT) */}
+                    {/* CLEAN SIDE-BY-SIDE BADGES */}
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                       <span className="pill" style={{ background: "#e0f2fe", color: "#0369a1", fontWeight: 700, fontSize: 10.5, padding: "2px 8px", border: "1px solid #bae6fd" }}>
-                        🏢 {client ? client.name : "Unassigned Client"}
+                        🏢 {clientName}
                       </span>
                       <span className="pill" style={{ background: "#f1f5f9", color: "#475569", fontWeight: 700, fontSize: 10.5, padding: "2px 8px", border: "1px solid #e2e8f0" }}>
                         ⚙️ {project.category || "Full Engineering"}
@@ -272,9 +442,10 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
                   </div>
 
                   <div style={{ display: "flex", gap: 6 }}>
+                    {/* CREATE & ASSIGN TEAMMATE BUTTON IN CARD HEADER */}
                     <button
                       className="btn sm"
-                      onClick={(e) => handleAddTeammateToProject(project.id, e)}
+                      onClick={(e) => handleOpenCreateModal(project.id, e)}
                       style={{
                         background: "var(--accent)",
                         color: "#fff",
@@ -403,24 +574,9 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
                         justifyContent: "center"
                       }}
                     >
-                      <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
                         No teammates assigned to tasks in this project yet.
                       </div>
-                      <button
-                        className="btn sm"
-                        onClick={(e) => handleAddTeammateToProject(project.id, e)}
-                        style={{
-                          background: "#2563eb",
-                          color: "#fff",
-                          fontWeight: 700,
-                          fontSize: 11,
-                          padding: "5px 14px",
-                          borderRadius: 7,
-                          cursor: "pointer"
-                        }}
-                      >
-                        ＋ Assign First Teammate
-                      </button>
                     </div>
                   )}
                 </div>
@@ -443,6 +599,222 @@ export default function Team({ db = {}, onAdd, onOpenProject, setModal, updateUs
           );
         })}
       </div>
+
+      {/* CREATE & ASSIGN TEAMMATE MODAL POPUP */}
+      {showCreateModal && (
+        <div 
+          style={{ 
+            position: 'fixed', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            background: 'rgba(15, 23, 42, 0.75)', 
+            backdropFilter: 'blur(6px)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            zIndex: 99999, 
+            padding: 20 
+          }}
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div 
+            className="card" 
+            onClick={(e) => e.stopPropagation()} 
+            style={{ 
+              width: '100%', 
+              maxWidth: 500, 
+              background: '#fff', 
+              borderRadius: 16, 
+              overflow: 'hidden', 
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)' 
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ padding: '16px 20px', background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 20 }}>👤</span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#fff' }}>Create & Assign Teammate</h3>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>Add engineering staff and assign initial project task</div>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowCreateModal(false)}
+                style={{ border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', width: 30, height: 30, borderRadius: 8, fontSize: 16, cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleCreateTeammateSubmit} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* SEARCH & SELECT EXISTING STAFF DROPDOWN */}
+              <div style={{ background: '#f8fafc', padding: 12, borderRadius: 10, border: '1px solid #cbd5e1' }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, color: '#1e40af', marginBottom: 4 }}>
+                  🔍 Search & Select Existing Company Staff
+                </label>
+                <select
+                  className="inp"
+                  onChange={(e) => {
+                    const selId = e.target.value;
+                    if (!selId) return;
+                    const found = (() => {
+                      const dbStaff = db.staff || [];
+                      const dbUsers = db.users || [];
+                      return [...dbStaff, ...dbUsers].find(s => String(s.id) === String(selId) || String(s.uuid) === String(selId));
+                    })();
+                    if (found) {
+                      setNewTmName(found.name || '');
+                      setNewTmRole(found.role || found.discipline || 'CAD Technician');
+                      setNewTmEmail(found.email || '');
+                      setNewTmPhone(found.contact_number || found.phone || '');
+                      setNewTmTaskTitle(prev => prev || `${found.name} - Project Assignment`);
+                    }
+                  }}
+                  style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8, background: '#fff', border: '1.5px solid #93c5fd', fontWeight: 600 }}
+                >
+                  <option value="">-- Click to search & select from company staff --</option>
+                  {(() => {
+                    const map = new Map();
+                    const allStaff = [...(db.staff || []), ...(db.users || [])];
+                    allStaff.forEach(u => {
+                      if (!u || !u.name) return;
+                      const r = String(u.role || '').toLowerCase();
+                      const ut = String(u.userType || u.user_type || '').toLowerCase();
+                      if (r.includes('admin') || ut.includes('admin') || r.includes('client') || ut.includes('client')) return;
+                      const key = u.name.trim().toLowerCase();
+                      if (!map.has(key)) {
+                        map.set(key, u);
+                      }
+                    });
+                    return Array.from(map.values());
+                  })().map((s) => (
+                    <option key={s.id || s.uuid || s.name} value={s.id || s.uuid}>
+                      👤 {s.name} ({s.role || s.discipline || 'Staff'}) — {s.email || 'No email'}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 4 }}>
+                  💡 Select an existing staff member to auto-fill details, or type manually below.
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+                  Teammate Name <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input 
+                  type="text" 
+                  className="inp"
+                  list="team-staff-names"
+                  required
+                  placeholder="e.g. Tomas, Boby, Rohan K."
+                  value={newTmName}
+                  onChange={(e) => setNewTmName(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                />
+                <datalist id="team-staff-names">
+                  {(db.staff || db.users || []).map(s => s.name && <option key={s.id || s.name} value={s.name} />)}
+                </datalist>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>Role / Discipline</label>
+                  <select 
+                    className="inp"
+                    value={newTmRole}
+                    onChange={(e) => setNewTmRole(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                  >
+                    <option value="CAD Technician">CAD Technician</option>
+                    <option value="Architect Lead">Architect Lead</option>
+                    <option value="Structural Engineer">Structural Engineer</option>
+                    <option value="MEP Specialist">MEP Specialist</option>
+                    <option value="Site Engineer">Site Engineer</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>Assign to Project</label>
+                  <select 
+                    className="inp"
+                    value={targetProjectId}
+                    onChange={(e) => setTargetProjectId(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                  >
+                    {filteredProjects.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+                  Assigned Task Title
+                </label>
+                <input 
+                  type="text" 
+                  className="inp"
+                  placeholder="e.g. make the 3d plan, HVAC duct design"
+                  value={newTmTaskTitle}
+                  onChange={(e) => setNewTmTaskTitle(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>Email (Optional)</label>
+                  <input 
+                    type="email" 
+                    className="inp"
+                    placeholder="tomas@dgec.com"
+                    value={newTmEmail}
+                    onChange={(e) => setNewTmEmail(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>Contact Phone (Optional)</label>
+                  <input 
+                    type="text" 
+                    className="inp"
+                    placeholder="+968 9400 1234"
+                    value={newTmPhone}
+                    onChange={(e) => setNewTmPhone(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: 12, borderRadius: 8 }}
+                  />
+                </div>
+              </div>
+
+              {/* Submit Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 10, borderTop: '1px solid #e2e8f0' }}>
+                <button 
+                  type="button" 
+                  className="btn sec sm" 
+                  onClick={() => setShowCreateModal(false)}
+                  style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  onClick={handleCreateTeammateSubmit}
+                  className="btn pri sm" 
+                  disabled={isSubmitting}
+                  style={{ padding: '8px 20px', borderRadius: 8, fontSize: 12, fontWeight: 700, background: '#10b981', color: '#fff', border: 'none', cursor: 'pointer' }}
+                >
+                  {isSubmitting ? 'Saving...' : '💾 Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

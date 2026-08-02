@@ -351,6 +351,7 @@ function AdminApp() {
 
   const ctx = {
     db,
+    commit,
     S,
     addProject,
     updateProject,
@@ -477,12 +478,12 @@ function AdminApp() {
             </button>
           </div>
           <div className="content">
-            {subTab === "company_staff" ? (
-              <AdminStaffPortal db={db} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
+            {subTab === "company_staff" || subTab === "pm_staff_portal" ? (
+              <AdminStaffPortal db={db} commit={commit} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
             ) : subTab === "pms" ? (
               <ProjectManagersFullData db={db} commit={commit} updateUser={updateUser} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
-            ) : subTab === "staff_mgmt" ? (
-              <StaffManagement isAdmin={true} db={db} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
+            ) : subTab === "staff_mgmt" || subTab === "staff" ? (
+              <StaffManagement isAdmin={true} db={db} commit={commit} updateUser={updateUser} onOpenProject={(projectId) => { setSelProjectId(projectId); setSubTab("projects"); }} />
             ) : subTab === "settings" ? (
               <Settings db={db} setList={setList} resetDB={resetDB} onNavigate={(key) => setSubTab(key)} loggedInUser={user} isAdmin={true} />
             ) : (

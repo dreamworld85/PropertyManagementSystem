@@ -46,7 +46,7 @@ export default function Settings({ db = {}, setList, resetDB, onNavigate, logged
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button 
                 className="btn pri sm" 
-                onClick={() => onNavigate && onNavigate(isPmUser ? "pm_staff_portal" : "company_staff")}
+                onClick={() => onNavigate && onNavigate(isAdmin ? "staff_mgmt" : "pm_staff_portal")}
                 style={{ background: "#2563eb", color: "#fff", border: "none", fontWeight: 700, borderRadius: 8, padding: "8px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}
               >
                 👥 Staff Portal
